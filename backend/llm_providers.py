@@ -314,9 +314,8 @@ class GeminiProvider(LLMProvider):
 
                 if any(m in err_str for m in _AUTH_MARKERS):
                     raise LLMError(
-                        "Your Google API key was rejected. Check that GOOGLE_API_KEY in .env is "
-                        "a valid key from https://aistudio.google.com/apikey and that the "
-                        "Gemini API is enabled for it.",
+                        "API response error: Your API key was rejected or invalid. Check that your API key in .env is "
+                        "valid and active.",
                         cause=exc,
                     ) from exc
 
@@ -330,8 +329,8 @@ class GeminiProvider(LLMProvider):
                 break
 
         raise LLMError(
-            "I couldn't get a response from Gemini. Every candidate model failed — check your "
-            "API key, your quota at https://aistudio.google.com, and your network connection.",
+            "API response error: Unable to get a response from the AI service. Every candidate model failed — check your "
+            "API key, quota, and network connection.",
             cause=last_error,
         ) from last_error
 
@@ -388,3 +387,223 @@ class GeminiProvider(LLMProvider):
         if off_topic:
             logger.info("Topic guard refused an out-of-scope query.")
         return not off_topic
+
+
+# --- Groq Provider -----------------------------------------------------------
+
+_GROQ_FALLBACK_MODELS = (
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.8-27b",
+    "qwen/qwen3.6-27b",
+    "groq/compound",
+    "llama-3.3-70b-versatile",
+    "llama-3.1-70b-versatile",
+    "llama-3.1-8b-instant",
+)
+
+
+def resolve_groq_model(client, requested_model: str = "groq-latest") -> str:
+    """Resolve a universal alias like 'groq-latest' to the best active chat model for the key.
+
+    Just like 'gemini-flash-latest' automatically points to the current active
+    model for Google keys, 'groq-latest' dynamically inspects the key's available
+    models and selects the best one without manual pinning.
+    """
+    req = (requested_model or "").lower().strip()
+    is_auto = req in {"groq-latest", "groq-auto", "auto", "latest", "default", ""}
+
+    try:
+        models_data = client.models.list().data
+        remote_models = [
+            m.id for m in models_data
+            if not m.id.startswith("whisper") and "guard" not in m.id
+        ]
+    except Exception as exc:
+        logger.warning("Could not list Groq models dynamically: %s", exc)
+        return "openai/gpt-oss-120b" if is_auto else requested_model
+
+    if not is_auto and requested_model in remote_models:
+        return requested_model
+
+    for candidate in _GROQ_FALLBACK_MODELS:
+        if candidate in remote_models:
+            return candidate
+
+    if remote_models:
+        return remote_models[0]
+
+    return "openai/gpt-oss-120b"
+
+
+class GroqProvider(LLMProvider):
+    """Groq implementation of LLMProvider for ultra-low latency inference."""
+
+    def __init__(
+        self,
+        api_key: str,
+        model_name: str = "groq-latest",
+        *,
+        timeout_seconds: int = 30,
+        max_retries: int = 3,
+    ):
+        try:
+            from groq import Groq
+        except ImportError as exc:  # pragma: no cover
+            raise LLMError(
+                "The groq package is not installed. Run: pip install groq"
+            ) from exc
+
+        if not api_key or not api_key.strip() or api_key.strip().startswith("your_"):
+            raise LLMError(
+                "API response error: No usable API key found. Copy .env.example to .env and set your API key."
+            )
+
+        self._client = Groq(api_key=api_key, timeout=float(timeout_seconds))
+        # Auto-resolve groq-latest to the best available chat model for this specific key
+        self._model_name = resolve_groq_model(self._client, model_name)
+        self._max_retries = max_retries
+        logger.info(
+            "GroqProvider initialized (requested=%s, active_model=%s, provider=groq)",
+            model_name,
+            self._model_name,
+        )
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    def _candidate_models(self) -> list[str]:
+        """Configured model first, then standard fallback models, de-duplicated."""
+        return list(dict.fromkeys([self._model_name, *_GROQ_FALLBACK_MODELS]))
+
+    def _generate_once(self, model_name: str, messages_payload: list[dict[str, str]]) -> str:
+        @retry_with_backoff(
+            max_retries=self._max_retries,
+            base_delay_seconds=1.0,
+            retry_on=(_TransientLLMFailure,),
+        )
+        def _attempt() -> str:
+            try:
+                chat_completion = self._client.chat.completions.create(
+                    model=model_name,
+                    messages=messages_payload,
+                    temperature=0.3,
+                )
+            except Exception as exc:
+                err_str = str(exc).lower()
+                is_auth = any(m in err_str for m in _AUTH_MARKERS)
+                if not is_auth and any(m in err_str for m in _TRANSIENT_MARKERS):
+                    raise _TransientLLMFailure(str(exc)) from exc
+                raise
+
+            if not chat_completion.choices or not chat_completion.choices[0].message:
+                raise LLMError("The AI model returned an empty response. Please try again.")
+
+            content = chat_completion.choices[0].message.content
+            if not content or not content.strip():
+                raise LLMError("The AI model returned an empty response. Please try again.")
+
+            return content.strip()
+
+        try:
+            return _attempt()
+        except _TransientLLMFailure as exc:
+            raise (exc.__cause__ or exc) from exc
+
+    def _call_model(self, messages_payload: list[dict[str, str]]) -> str:
+        last_error: Exception | None = None
+
+        for model_name in self._candidate_models():
+            try:
+                return self._generate_once(model_name, messages_payload)
+            except LLMError:
+                raise
+            except Exception as exc:
+                last_error = exc
+                err_str = str(exc).lower()
+
+                # If the specific model is not found or quota exceeded, try next candidate model
+                if any(m in err_str for m in _TRY_NEXT_MODEL_MARKERS):
+                    logger.warning(
+                        "Model %s unavailable (%s) — trying next candidate model.", model_name, exc
+                    )
+                    continue
+
+                if any(m in err_str for m in _AUTH_MARKERS):
+                    raise LLMError(
+                        "API response error: Your API key was rejected or invalid. Check that your API key in .env is "
+                        "valid and active.",
+                        cause=exc,
+                    ) from exc
+
+                logger.error("Model %s failed with a non-recoverable error: %s", model_name, exc)
+                break
+
+        raise LLMError(
+            "API response error: Unable to get a response from the AI service. Check your API key, "
+            "rate limits, and network connection.",
+            cause=last_error,
+        ) from last_error
+
+    @traceable(name="GroqProvider.generate", run_type="llm")
+    def generate(self, messages: Sequence[ChatMessage], *, system_instruction: str = "") -> str:
+        payload: list[dict[str, str]] = []
+        if system_instruction:
+            payload.append({"role": "system", "content": system_instruction.strip()})
+
+        for msg in messages:
+            role = "user" if msg.role == "user" else "assistant"
+            payload.append({"role": role, "content": msg.content})
+
+        return self._call_model(payload)
+
+    def decide_needs_retrieval(self, query: str) -> bool:
+        decision_prompt = (
+            "You are a routing step in a career-advice assistant that has an "
+            "uploaded reference document available. Decide whether answering "
+            "the user's question below would meaningfully benefit from "
+            "searching that document, versus being answerable with general "
+            "career-advice knowledge alone.\n\n"
+            f'Question: "{query}"\n\n'
+            "Reply with exactly one word: YES or NO."
+        )
+        try:
+            answer = self._call_model([{"role": "user", "content": decision_prompt}]).strip().upper()
+            return answer.startswith("Y")
+        except Exception as exc:
+            logger.warning("Retrieval-decision step failed, defaulting to retrieve=True: %s", exc)
+            return True
+
+    def is_career_related(self, query: str) -> bool:
+        try:
+            verdict = self._call_model([{"role": "user", "content": career_topic_prompt(query)}])
+        except Exception as exc:
+            logger.warning("Topic-guard step failed, allowing the query through: %s", exc)
+            return True
+
+        off_topic = is_off_topic_verdict(verdict)
+        if off_topic:
+            logger.info("Topic guard refused an out-of-scope query.")
+        return not off_topic
+
+
+def create_llm_provider(settings) -> LLMProvider:
+    """Factory function to build the active LLM provider based on settings."""
+    provider_type = getattr(settings, "llm_provider", "groq")
+
+    if provider_type == "groq":
+        return GroqProvider(
+            api_key=getattr(settings, "groq_api_key", "") or "",
+            model_name=getattr(settings, "groq_model", "llama-3.3-70b-versatile"),
+            timeout_seconds=getattr(settings, "llm_request_timeout_seconds", 30),
+            max_retries=getattr(settings, "llm_max_retries", 3),
+        )
+
+    return GeminiProvider(
+        api_key=getattr(settings, "google_api_key", "") or "",
+        model_name=getattr(settings, "gemini_model", "gemini-flash-latest"),
+        timeout_seconds=getattr(settings, "llm_request_timeout_seconds", 30),
+        max_retries=getattr(settings, "llm_max_retries", 3),
+    )
+
