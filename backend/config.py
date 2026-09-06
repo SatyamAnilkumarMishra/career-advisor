@@ -92,6 +92,7 @@ def _get_bool(name: str, default: bool) -> bool:
 
 _VALID_ENVIRONMENTS = {"development", "production", "test"}
 _VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+_VALID_LLM_PROVIDERS = {"groq", "gemini"}
 
 
 @dataclass(frozen=True)
@@ -99,13 +100,16 @@ class Settings:
     """Immutable, validated application settings."""
 
     # --- Secrets ---
-    google_api_key: str
+    google_api_key: str | None = None
+    groq_api_key: str | None = None
 
     # --- Environment / logging ---
     app_env: str = "development"
     log_level: str = "INFO"
 
     # --- LLM ---
+    llm_provider: str = "groq"
+    groq_model: str = "groq-latest"
     gemini_model: str = "gemini-flash-latest"
     llm_request_timeout_seconds: int = 30
     llm_max_retries: int = 3
@@ -167,6 +171,10 @@ class Settings:
     def has_job_search_api(self) -> bool:
         return bool(self.adzuna_app_id and self.adzuna_app_key)
 
+    @property
+    def active_model(self) -> str:
+        return self.groq_model if self.llm_provider == "groq" else self.gemini_model
+
 
 def load_settings() -> Settings:
     """Read and validate settings from the environment. Raises ConfigError on failure."""
@@ -181,11 +189,48 @@ def load_settings() -> Settings:
             f"LOG_LEVEL must be one of {sorted(_VALID_LOG_LEVELS)}, got: {log_level!r}"
         )
 
+    llm_provider = (_get_str("LLM_PROVIDER", "") or "").lower().strip()
+    google_api_key = _get_str("GOOGLE_API_KEY")
+    groq_api_key = _get_str("GROQ_API_KEY")
+
+    if not llm_provider:
+        if groq_api_key and not groq_api_key.startswith("your_"):
+            llm_provider = "groq"
+        elif google_api_key and not google_api_key.startswith("your_"):
+            llm_provider = "gemini"
+        else:
+            llm_provider = "groq"
+
+    if llm_provider not in _VALID_LLM_PROVIDERS:
+        raise ConfigError(
+            f"LLM_PROVIDER must be one of {sorted(_VALID_LLM_PROVIDERS)}, got: {llm_provider!r}"
+        )
+
+    if llm_provider == "groq":
+        if not groq_api_key or groq_api_key.startswith("your_"):
+            if google_api_key and not google_api_key.startswith("your_"):
+                llm_provider = "gemini"
+            else:
+                raise ConfigError(
+                    "Required environment variable 'GROQ_API_KEY' is not set. "
+                    "Copy .env.example to .env and set GROQ_API_KEY (https://console.groq.com/keys) "
+                    "or set LLM_PROVIDER=gemini with GOOGLE_API_KEY."
+                )
+    elif llm_provider == "gemini":
+        if not google_api_key or google_api_key.startswith("your_"):
+            raise ConfigError(
+                "Required environment variable 'GOOGLE_API_KEY' is not set. "
+                "Copy .env.example to .env and provide a value."
+            )
+
     settings = Settings(
-        google_api_key=_get_str("GOOGLE_API_KEY", required=True),
+        google_api_key=google_api_key,
+        groq_api_key=groq_api_key,
+        llm_provider=llm_provider,
+        groq_model=_get_str("GROQ_MODEL", "groq-latest") or "groq-latest",
         app_env=app_env,
         log_level=log_level,
-        gemini_model=_get_str("GEMINI_MODEL", "gemini-flash-latest"),
+        gemini_model=_get_str("GEMINI_MODEL", "gemini-flash-latest") or "gemini-flash-latest",
         llm_request_timeout_seconds=_get_int(
             "LLM_REQUEST_TIMEOUT_SECONDS", 30, min_value=1, max_value=300
         ),
