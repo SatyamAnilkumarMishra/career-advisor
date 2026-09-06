@@ -88,15 +88,10 @@ TOOL_EXAMPLES: list[dict[str, Any]] = [
 
 
 def _build_provider():
-    from backend.llm_providers import GeminiProvider
+    from backend.llm_providers import create_llm_provider
 
     settings = get_settings()
-    return GeminiProvider(
-        api_key=settings.google_api_key,
-        model_name=settings.gemini_model,
-        timeout_seconds=settings.llm_request_timeout_seconds,
-        max_retries=settings.llm_max_retries,
-    )
+    return create_llm_provider(settings)
 
 
 def _chat_target(inputs: dict) -> dict:
