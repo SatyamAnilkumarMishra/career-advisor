@@ -1,4 +1,5 @@
-"""Bundled sample job listings.
+"""
+Bundled sample job listings.
 
 `career_tools.search_jobs()` uses these as a fallback when no live job-search
 API is configured (see `Settings.has_job_search_api`), so the Job Search
