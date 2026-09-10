@@ -132,3 +132,105 @@ def _require_service() -> tuple[Settings, RagService, LLMProvider]:
             detail="API response error: AI Service is not initialized. Please ensure your API key is properly configured in .env",
         )
     return state.settings, state.service, state.llm
+
+
+# ---------------------------------------------------------------------------
+# Request & Response Schemas
+# ---------------------------------------------------------------------------
+
+
+class ChatHistoryItem(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    query: str
+    history: list[ChatHistoryItem] = Field(default_factory=list)
+    student_profile: str = ""
+
+
+class SourceItem(BaseModel):
+    content: str
+    page: int | None = None
+    relevance_score: float = 0.0
+
+
+class ChatResponse(BaseModel):
+    text: str
+    used_retrieval: bool
+    sources: list[SourceItem] = Field(default_factory=list)
+
+
+class ResumeAnalyzeRequest(BaseModel):
+    resume_text: str
+    target_role: str | None = None
+
+
+class ResumeAnalysisResponse(BaseModel):
+    extracted_skills: list[str]
+    experience_summary: str
+    strengths: list[str]
+    gaps_or_improvements: list[str]
+    suggested_target_roles: list[str]
+
+
+class SkillGapRequest(BaseModel):
+    skills: list[str]
+    target_role: str
+
+
+class SkillGapResponse(BaseModel):
+    matched_skills: list[str]
+    missing_skills: list[str]
+    partially_met_skills: list[str]
+    overall_readiness: str
+    summary: str
+
+
+class RoadmapRequest(BaseModel):
+    skills: list[str]
+    target_role: str
+    timeframe_months: int = 6
+
+
+class RoadmapMilestoneItem(BaseModel):
+    title: str
+    duration: str
+    focus_skills: list[str]
+    actions: list[str]
+
+
+class RoadmapResponse(BaseModel):
+    target_role: str
+    milestones: list[RoadmapMilestoneItem]
+    summary: str
+
+
+class JobSearchRequest(BaseModel):
+    role: str
+    skills: list[str] | None = None
+    location: str | None = None
+    experience_level: str | None = None
+    limit: int | None = None
+
+
+class JobItem(BaseModel):
+    title: str
+    company: str
+    location: str
+    url: str
+    description: str
+    skills: list[str]
+    experience_level: str | None
+    source: str
+
+
+class HistoryItem(BaseModel):
+    id: str
+    query: str
+    timestamp: str
+
+
+class AddHistoryRequest(BaseModel):
+    query: str
