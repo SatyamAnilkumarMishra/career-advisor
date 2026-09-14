@@ -281,3 +281,210 @@ story.append(
         "urge to fill it."
     )
 )
+
+# ---------------------------------------------------------------------------
+# 4. Building In-Demand Skills
+# ---------------------------------------------------------------------------
+story.append(h1("4. Building In-Demand Skills"))
+story.append(
+    p(
+        "Skill-building pays off fastest when it is aimed at a specific target role rather than "
+        "pursued generically. Start from the destination and work backward: pick 2-3 target job "
+        "postings, list every skill they mention, and sort into skills you already have, skills "
+        "you're missing, and skills you have partially."
+    )
+)
+story.append(h2("4.1 A durable learning loop"))
+story.append(
+    bullets(
+        [
+            "Learn the minimum theory needed to start (a short course or a few chapters), then "
+            "immediately apply it to a small real project — passive consumption without building "
+            "something rarely sticks.",
+            "Ship something visible: a repo, a write-up, a small tool, a dataset analysis. Proof "
+            "of applied skill outweighs a certificate alone in almost every hiring conversation.",
+            "Get feedback from someone more experienced before moving to the next skill — this "
+            "is the step most self-learners skip and it's where the compounding happens.",
+            "Revisit fundamentals periodically; skills decay faster than most people expect, "
+            "especially tools that change quickly.",
+        ]
+    )
+)
+story.append(h2("4.2 High-durability skill categories"))
+story.append(
+    p(
+        "Regardless of specific role, three categories consistently transfer across roles and "
+        "hold their value over a career: quantitative/data reasoning (statistics, spreadsheet "
+        "and SQL fluency, and interpreting data critically rather than mechanically), written "
+        "and verbal communication (documenting decisions, presenting technical work to "
+        "non-technical audiences), and applied AI/automation literacy (using AI tools to "
+        "genuinely speed up your work, not just superficially)."
+    )
+)
+
+# ---------------------------------------------------------------------------
+# 5. Job Search Strategy & Networking
+# ---------------------------------------------------------------------------
+story.append(h1("5. Job Search Strategy &amp; Networking"))
+story.append(
+    p(
+        "The majority of roles are filled through referrals and warm introductions rather than "
+        "cold applications through job boards alone. A search strategy that relies purely on "
+        "applying to postings tends to convert far worse than one that combines applications "
+        "with direct outreach."
+    )
+)
+story.append(h2("5.1 Networking that doesn't feel transactional"))
+story.append(
+    bullets(
+        [
+            "Reach out before you need something. A short, genuine message about someone's work "
+            "(\"I read your post on X and had a follow-up question\") lands better than a cold "
+            "ask for a referral from someone you've never spoken to.",
+            "Give before you ask: share a relevant article, make an introduction, offer a piece "
+            "of specific feedback. Small, low-cost favors build the relationship that makes a "
+            "later ask comfortable.",
+            "When you do ask for a referral, make it easy: attach your resume, a one-line pitch "
+            "of why you're a fit, and the specific job link — don't make the other person do "
+            "research on your behalf.",
+        ]
+    )
+)
+story.append(h2("5.2 A weekly search cadence that scales"))
+story.append(
+    p(
+        "A sustainable structure for an active search: roughly 40% of time on targeted "
+        "applications to roles you're genuinely a strong fit for, 30% on outreach and "
+        "networking conversations, 20% on skill-building or portfolio work, and 10% on "
+        "interview practice. Track every application in a simple spreadsheet (role, company, "
+        "date applied, contact, status, follow-up date) — searches that go longer than 6-8 "
+        "weeks without a tracking system tend to lose momentum and repeat wasted effort."
+    )
+)
+
+# ---------------------------------------------------------------------------
+# 6. Choosing and Planning a Career Path
+# ---------------------------------------------------------------------------
+story.append(h1("6. Choosing and Planning a Career Path"))
+story.append(
+    p(
+        "Career direction is rarely found by introspection alone — it's found by running small, "
+        "low-cost experiments and paying attention to what energizes you versus what drains you, "
+        "then course-correcting. Treat the first few years of a career as a series of "
+        "hypotheses to test, not a single irreversible choice."
+    )
+)
+story.append(h2("6.1 A simple framework for evaluating a path"))
+story.append(
+    Table(
+        [
+            ["Dimension", "Questions to ask"],
+            ["Interest", "Would you read about this on a Saturday out of curiosity?"],
+            ["Aptitude", "Does feedback suggest you pick this up faster than peers?"],
+            ["Market demand", "Are there enough open roles, in enough places, to have options?"],
+            ["Trajectory", "Does 5 years in this path compound into more opportunity, or a ceiling?"],
+        ],
+        colWidths=[1.6 * inch, 4.4 * inch],
+        style=TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), "#1a1a2e"),
+                ("TEXTCOLOR", (0, 0), (-1, 0), "#ffffff"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9.5),
+                ("GRID", (0, 0), (-1, -1), 0.5, "#cccccc"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ]
+        ),
+    )
+)
+story.append(Spacer(1, 10))
+story.append(
+    p(
+        "A path strong on three of the four is usually worth pursuing; a path weak on market "
+        "demand and trajectory is worth treating as a hobby rather than a career bet, even if "
+        "interest and aptitude are high."
+    )
+)
+story.append(h2("6.2 Milestone-based roadmaps"))
+story.append(
+    p(
+        "Break a target transition into 3-4 milestones spread across your timeframe rather than "
+        "a single distant goal. A typical 6-month transition into a new technical role looks "
+        "like: Month 1-2 close the biggest skill gaps with focused projects; Month 2-4 build "
+        "2-3 portfolio pieces and start networking outreach; Month 3-5 begin applying while "
+        "continuing to build; Month 5-6 concentrate on interview loops and negotiation. Review "
+        "progress every 2-3 weeks and adjust the plan rather than treating the original roadmap "
+        "as fixed."
+    )
+)
+
+# ---------------------------------------------------------------------------
+# 7. Remote & Hybrid Work
+# ---------------------------------------------------------------------------
+story.append(h1("7. Remote &amp; Hybrid Work Effectiveness"))
+story.append(
+    p(
+        "Remote work removes ambient visibility, so impact has to be made legible deliberately. "
+        "The professionals who thrive remotely tend to over-communicate status relative to an "
+        "office norm: a short written update at the end of each day or week, decisions "
+        "documented in writing rather than left in a chat thread, and questions asked in public "
+        "channels so the answer helps the next person too."
+    )
+)
+story.append(
+    p(
+        "For early-career remote workers specifically, proactively scheduling brief 1:1s with "
+        "teammates and skip-level managers compensates for the informal hallway conversations "
+        "that build visibility in an office. Being remote is not a career risk on its own; being "
+        "invisible is."
+    )
+)
+
+# ---------------------------------------------------------------------------
+# 8. Common Pitfalls
+# ---------------------------------------------------------------------------
+story.append(h1("8. Common Pitfalls to Avoid"))
+story.append(
+    bullets(
+        [
+            "Applying to roles with a generic, unmodified resume — tailoring the top third "
+            "meaningfully improves response rates for a few minutes of extra effort per "
+            "application.",
+            "Waiting to network until actively job-hunting — relationships built under urgency "
+            "read as transactional and convert worse than relationships built over time.",
+            "Treating a job offer's base salary as fixed and not negotiating the rest of the "
+            "package (start date, signing bonus, equity, title) even when base truly is capped "
+            "by a band.",
+            "Learning skills in isolation from a target role, leading to a portfolio that looks "
+            "impressive but doesn't map to what target employers are actually screening for.",
+            "Going quiet in a remote role and letting managers assume no news is bad news — "
+            "under-communication is consistently rated the top failure mode for junior remote "
+            "hires.",
+        ]
+    )
+)
+
+story.append(Spacer(1, 16))
+story.append(
+    Paragraph(
+        "<i>This guide is a general-purpose reference. For the highest quality guidance, "
+        "combine it with specifics about your own background, target role, and location when "
+        "chatting with Career Advisor.</i>",
+        styles["BodyCustom"],
+    )
+)
+
+doc = SimpleDocTemplate(
+    OUTPUT_PATH,
+    pagesize=letter,
+    leftMargin=0.85 * inch,
+    rightMargin=0.85 * inch,
+    topMargin=0.85 * inch,
+    bottomMargin=0.85 * inch,
+    title="Career Advisor Guide 2025",
+    author="Career Advisor",
+)
+doc.build(story)
+print(f"Wrote {OUTPUT_PATH}")
