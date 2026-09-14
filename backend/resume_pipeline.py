@@ -61,3 +61,63 @@ def _extract_pdf_text(file_path: str) -> str:
             cause=exc,
         ) from exc
     return "\n".join(pages)
+
+
+def _extract_docx_text(file_path: str) -> str:
+    try:
+        import docx
+    except ImportError as exc:  # pragma: no cover
+        raise ResumeParsingError(
+            "Required DOCX dependencies are not installed. Run: pip install -r requirements.txt"
+        ) from exc
+
+    try:
+        document = docx.Document(file_path)
+        paragraphs = [p.text for p in document.paragraphs]
+        for table in document.tables:
+            for row in table.rows:
+                paragraphs.extend(cell.text for cell in row.cells)
+    except Exception as exc:
+        raise ResumeParsingError(
+            "We couldn't read this DOCX resume. It may be corrupted or in an "
+            "unsupported format.",
+            cause=exc,
+        ) from exc
+    return "\n".join(paragraphs)
+
+
+def _extract_txt_text(file_path: str) -> str:
+    try:
+        with open(file_path, encoding="utf-8", errors="ignore") as f:
+            return f.read()
+    except Exception as exc:
+        raise ResumeParsingError("We couldn't read this text file.", cause=exc) from exc
+
+
+def extract_resume_text(
+    file_path: str, settings: Settings | None = None, *, max_size_bytes: int | None = None
+) -> str:
+    """Validate and extract plain text from a resume file (PDF, DOCX, or TXT)."""
+    if max_size_bytes is None:
+        if settings is None:
+            raise ValueError("Either `settings` or `max_size_bytes` must be provided.")
+        max_size_bytes = settings.max_resume_size_bytes
+
+    ext = validate_resume_file(file_path, max_size_bytes=max_size_bytes)
+
+    logger.info("Extracting resume text from %s file: %s", ext, file_path)
+    if ext == ".pdf":
+        text = _extract_pdf_text(file_path)
+    elif ext == ".docx":
+        text = _extract_docx_text(file_path)
+    else:
+        text = _extract_txt_text(file_path)
+
+    text = text.strip()
+    if not text:
+        raise ResumeParsingError(
+            "No readable text was found in this resume. If it's a scanned "
+            "image, try exporting a text-based PDF or pasting the text directly."
+        )
+    logger.info("Extracted %d character(s) of resume text", len(text))
+    return text
