@@ -133,3 +133,53 @@ def resume_analyzer(resume_text: str, target_role: str | None = None) -> dict:
         return asdict(result)
     except CareerAdvisorError as exc:
         return {"error": exc.user_message}
+
+
+@mcp_tool()
+def career_roadmap_generator(
+    current_skills: list[str], target_role: str, timeframe_months: int = 6
+) -> dict:
+    """Generate a structured, milestone-based learning roadmap toward a target role.
+
+    Args:
+        current_skills: List of the user's current skills.
+        target_role: The role the roadmap should lead toward.
+        timeframe_months: Desired total timeframe in months (1-36).
+    """
+    from backend.career_tools import generate_roadmap
+
+    try:
+        result = generate_roadmap(
+            current_skills, target_role, _get_provider(), timeframe_months=timeframe_months
+        )
+        return {
+            "target_role": result.target_role,
+            "summary": result.summary,
+            "milestones": [asdict(m) for m in result.milestones],
+        }
+    except CareerAdvisorError as exc:
+        return {"error": exc.user_message}
+
+
+@mcp_tool()
+def analyze_uploaded_resume(file_path: str, target_role: str | None = None) -> dict:
+    """Extract text from a resume file on disk (PDF/DOCX/TXT) and analyze it in one step.
+
+    Args:
+        file_path: Absolute path to the resume file.
+        target_role: Optional target role to evaluate the resume against.
+    """
+    from backend.career_tools import analyze_resume
+    from backend.resume_pipeline import extract_resume_text
+
+    try:
+        text = extract_resume_text(file_path, _settings)
+        result = analyze_resume(text, _get_provider(), target_role=target_role)
+        return asdict(result)
+    except CareerAdvisorError as exc:
+        return {"error": exc.user_message}
+
+
+if __name__ == "__main__":
+    logger.info("Starting Career Advisor MCP server (transport=%s)", _settings.mcp_transport)
+    mcp.run(transport=_settings.mcp_transport)
