@@ -5,7 +5,7 @@ services:
     runtime: python
     plan: free                        # Free tier: no persistent disk, spins down after ~15 min idle
     buildCommand: pip install -r backend/requirements.txt
-    startCommand: python app.py api --host 0.0.0.0 --port $PORT --no-reload
+    startCommand: python -m uvicorn backend.server:app --host 0.0.0.0 --port $PORT --workers 1
     healthCheckPath: /api/status
     envVars:
       - key: PYTHON_VERSION
@@ -16,7 +16,7 @@ services:
         sync: false                   # set secret value in Render dashboard
       - key: GROQ_MODEL
         value: groq-latest
-      
+     
       - key: CHROMA_PERSIST_DIR
         value: chroma_db
       - key: HF_HOME
