@@ -90,3 +90,102 @@ def build_vector_store(pdf_path: str, settings: Settings):
         raise VectorStoreError(
             "Required RAG dependencies are not installed. Run: pip install -r requirements.txt"
         ) from exc
+
+    validate_pdf(pdf_path, max_size_bytes=settings.max_upload_size_bytes)
+
+    logger.info("Loading PDF: %s", pdf_path)
+    try:
+        docs = PyPDFLoader(pdf_path).load()
+    except Exception as exc:
+        raise DocumentValidationError(
+            "We couldn't read this PDF. It may be corrupted, encrypted, or scanned "
+            "images without extractable text.",
+            cause=exc,
+        ) from exc
+
+    if not docs:
+        raise DocumentValidationError("No readable text was found in this PDF.")
+
+    logger.info("Loaded %d page(s) from PDF", len(docs))
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=settings.chunk_size,
+        chunk_overlap=settings.chunk_overlap,
+    )
+    splits = splitter.split_documents(docs)
+    if not splits:
+        raise VectorStoreError("No text chunks could be created from this PDF.")
+
+    logger.info("Created %d text chunk(s)", len(splits))
+
+    try:
+        embeddings = _build_embeddings()
+        # `langchain_chroma.Chroma` (backed by chromadb's PersistentClient) persists
+        # to disk automatically on write — no manual `.persist()` call needed or
+        # available, unlike the older `langchain_community` Chroma wrapper.
+        vectorstore = Chroma.from_documents(
+            splits, embeddings, persist_directory=settings.chroma_persist_dir
+        )
+        logger.info("Vector store persisted to %s", settings.chroma_persist_dir)
+        return vectorstore
+    except (DocumentValidationError, VectorStoreError):
+        raise
+    except Exception as exc:
+        raise VectorStoreError(
+            "Something went wrong while building the document index. Please try again.",
+            cause=exc,
+        ) from exc
+
+
+def load_existing_vector_store(settings: Settings):
+    """Load a previously persisted vector store, if one exists. Returns None if not found."""
+    if not os.path.exists(settings.chroma_persist_dir):
+        logger.info("No existing vector store found at %s", settings.chroma_persist_dir)
+        return None
+
+    try:
+        from langchain_chroma import Chroma
+
+        embeddings = _build_embeddings()
+        vectorstore = Chroma(
+            persist_directory=settings.chroma_persist_dir,
+            embedding_function=embeddings,
+        )
+        logger.info("Loaded existing vector store from %s", settings.chroma_persist_dir)
+        return vectorstore
+    except Exception as exc:
+        logger.error("Failed to load existing vector store: %s", exc, exc_info=True)
+        return None
+
+
+def retrieve_relevant_chunks(vectorstore, query: str, settings: Settings) -> list[RetrievedChunk]:
+    """Run similarity search and filter out low-relevance matches.
+
+    Chroma's `similarity_search_with_relevance_scores` returns a score in
+    [0, 1] where higher is more relevant (LangChain normalizes the underlying
+    distance metric). Chunks below `settings.relevance_score_threshold` are
+    dropped so off-topic questions don't get contaminated with noise.
+    """
+    try:
+        results = vectorstore.similarity_search_with_relevance_scores(
+            query, k=settings.max_context_docs
+        )
+    except Exception as exc:
+        raise VectorStoreError(
+            "Something went wrong while searching the document.", cause=exc
+        ) from exc
+
+    chunks: list[RetrievedChunk] = []
+    for doc, score in results:
+        if score < settings.relevance_score_threshold:
+            continue
+        metadata = doc.metadata or {}
+        chunks.append(
+            RetrievedChunk(
+                content=doc.page_content,
+                page=metadata.get("page"),
+                source=metadata.get("source"),
+                relevance_score=round(float(score), 3),
+            )
+        )
+    return chunks
