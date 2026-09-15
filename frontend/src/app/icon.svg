@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 130" width="100%" height="100%">
+  <defs>
+    <linearGradient id="shellGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="60%" stop-color="#ece9f3" />
+      <stop offset="100%" stop-color="#d5cfe3" />
+    </linearGradient>
+    <radialGradient id="visorGrad2" cx="50%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#1e183a" />
+      <stop offset="70%" stop-color="#0c071a" />
+      <stop offset="100%" stop-color="#030107" />
+    </radialGradient>
+    <radialGradient id="eyeCoreGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="60%" stop-color="#22d3ee" />
+      <stop offset="100%" stop-color="transparent" />
+    </radialGradient>
+    <radialGradient id="shadowGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="rgba(10,7,20,0.75)" />
+      <stop offset="100%" stop-color="rgba(10,7,20,0)" />
+    </radialGradient>
+    <filter id="cyanGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="3.5" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Mascot Ground Shadow -->
+  <ellipse cx="80" cy="120" rx="36" ry="5" fill="url(#shadowGrad)" />
+
+  <!-- Mascot Levitating Head -->
+  <g>
+    <!-- Top Antenna -->
+    <line x1="80" y1="22" x2="80" y2="10" stroke="#CBD5E1" stroke-width="2" />
+    <circle cx="80" cy="10" r="4.5" fill="#22d3ee" filter="url(#cyanGlow)" />
+    <circle cx="80" cy="10" r="1.8" fill="#ffffff" />
+
+    <!-- Ears -->
+    <ellipse cx="27" cy="68" rx="5" ry="14" fill="url(#shellGrad)" stroke="#b6adc7" stroke-width="1" />
+    <ellipse cx="133" cy="68" rx="5" ry="14" fill="url(#shellGrad)" stroke="#b6adc7" stroke-width="1" />
+
+    <!-- Main Helmet Dome -->
+    <path d="M 30,70 C 30,34 50,22 80,22 C 110,22 130,34 130,70 C 130,94 112,102 80,102 C 48,102 30,94 30,70 Z" fill="url(#shellGrad)" stroke="#b6adc7" stroke-width="1.5" />
+
+    <!-- Visor Glass -->
+    <rect x="40" y="44" width="80" height="46" rx="20" fill="#000000" opacity="0.45" />
+    <rect x="42" y="46" width="76" height="42" rx="18" fill="url(#visorGrad2)" stroke="rgba(168,85,247,0.35)" stroke-width="1" />
+
+    <!-- Glowing Cyan Eyes -->
+    <ellipse cx="63" cy="67" rx="6" ry="9" fill="url(#eyeCoreGrad)" filter="url(#cyanGlow)" />
+    <ellipse cx="97" cy="67" rx="6" ry="9" fill="url(#eyeCoreGrad)" filter="url(#cyanGlow)" />
+  </g>
+</svg>

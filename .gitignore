@@ -1,0 +1,151 @@
+# ================================
+# Secrets / Environment Variables
+# ================================
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ================================
+# Next.js / Node.js
+# ================================
+node_modules/
+.next/
+out/
+dist/
+build/
+
+# Next.js generated files
+.next/
+.vercel/
+
+# npm
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+bun-debug.log*
+
+# Package manager files - DO NOT ignore these
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+# bun.lockb
+
+# ================================
+# Python
+# ================================
+__pycache__/
+*.py[cod]
+*.pyo
+*$py.class
+
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+*.egg-info/
+build/
+dist/
+
+# ================================
+# Virtual Environments
+# ================================
+.venv/
+venv/
+env/
+ENV/
+
+# ================================
+# Vector Store / Generated Data
+# ================================
+# The persisted ChromaDB index (CHROMA_PERSIST_DIR, default `chroma_db`).
+# It's a build artifact — regenerated from the source PDF on first run — and
+# contains a SQLite DB plus binary HNSW segments that must never be committed.
+chroma_db/
+chroma_db*/
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Chroma / local vector database files
+chroma/
+.chroma/
+vector_db/
+
+# Downloaded sentence-transformers / HuggingFace model weights
+.cache/huggingface/
+models/
+
+# NOTE: Career_Advisor_Guide_2025.pdf is a committed repo asset (the default
+# RAG reference document) — deliberately not ignored here.
+
+# ================================
+# Uploaded / Staging Documents
+# ================================
+uploads/
+temp_document.pdf
+temp_resume.*
+*.tmp
+
+# ================================
+# LangSmith / Evaluation Artifacts
+# ================================
+.langsmith/
+langsmith_cache/
+
+# ================================
+# Coverage
+# ================================
+.coverage
+htmlcov/
+coverage.xml
+.coverage.*
+.pytest_cache/
+
+# ================================
+# Frontend / Testing
+# ================================
+playwright-report/
+test-results/
+coverage/
+
+# ================================
+# TypeScript
+# ================================
+*.tsbuildinfo
+next-env.d.ts
+
+# ================================
+# Vercel
+# ================================
+.vercel/
+
+# ================================
+# Editor / IDE
+# ================================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ================================
+# OS
+# ================================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ================================
+# Logs
+# ================================
+*.log
+logs/
+
+# ================================
+# Temporary Files
+# ================================
+*.tmp
+*.temp
+*.bak
