@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convenience runner for Career Advisor: api / frontend / cli / mcp / install / setup / status."""
+"""Convenience runner for Career Advisor: api / cli / mcp / install / setup / status / doctor."""
 
 from __future__ import annotations
 
@@ -8,25 +8,34 @@ import os
 import subprocess
 import sys
 
+# Ensure UTF-8 output encoding across Windows / Linux / macOS terminals
+if sys.platform == "win32":
+    try:
+        if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 
 def check_requirements() -> bool:
     try:
         import fastapi  # noqa: F401
-        import google.genai  # noqa: F401
         import langchain  # noqa: F401
         import uvicorn  # noqa: F401
 
         return True
     except ImportError as exc:
-        print(f"❌ Missing required packages: {exc}")
-        print("📦 Install them with: pip install -r requirements.txt")
+        print(f"[X] Missing required packages: {exc}")
+        print("Install them with: pip install -r requirements.txt")
         return False
 
 
 def check_env() -> bool:
     if not os.path.exists(".env"):
-        print("❌ .env file not found")
-        print("🔧 Run: python run.py setup   (then edit .env with your API key)")
+        print("[X] .env file not found")
+        print("Run: python app.py setup   (then edit .env with your API key)")
         return False
 
     try:
@@ -34,96 +43,98 @@ def check_env() -> bool:
 
         get_settings()
     except ConfigError as exc:
-        print(f"❌ Configuration problem: {exc}")
+        print(f"[X] Configuration problem: {exc}")
         return False
     except Exception as exc:  # pragma: no cover
-        print(f"❌ Unexpected configuration error: {exc}")
+        print(f"[X] Unexpected configuration error: {exc}")
         return False
 
-    print("✅ Environment configured correctly")
+    print("[OK] Environment configured correctly")
     return True
 
 
-def run_api() -> None:
-    print("🚀 Starting FastAPI backend server on http://localhost:8000…")
+def run_api(host: str = "127.0.0.1", port: int = 8000, reload: bool = True) -> None:
+    print("=" * 60)
+    print("🚀 Career Advisor AI Platform")
+    print(f"👉 Web App & API: http://{host}:{port}")
+    print("=" * 60)
     try:
-        subprocess.run(
-            [sys.executable, "-m", "uvicorn", "backend.server:app", "--host", "0.0.0.0", "--port", "8000", "--reload"],
-            check=True,
-        )
+        cmd = [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "backend.server:app",
+            "--host",
+            host,
+            "--port",
+            str(port),
+        ]
+        if reload:
+            cmd.append("--reload")
+        subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as exc:
-        print(f"❌ Failed to start FastAPI server: {exc}")
+        print(f"[X] Failed to start server: {exc}")
         sys.exit(1)
     except KeyboardInterrupt:
-        print("\n👋 FastAPI server stopped")
-
-
-def run_frontend() -> None:
-    print("🚀 Starting Next.js frontend on http://localhost:3000…")
-    frontend_dir = os.path.join(os.path.dirname(__file__), "frontend")
-    try:
-        subprocess.run(["npm", "run", "dev"], cwd=frontend_dir, shell=True, check=True)
-    except subprocess.CalledProcessError as exc:
-        print(f"❌ Failed to start Next.js frontend: {exc}")
-        sys.exit(1)
-    except KeyboardInterrupt:
-        print("\n👋 Frontend stopped")
+        print("\n👋 Server stopped")
 
 
 def run_mcp() -> None:
-    print("🚀 Starting Career Advisor MCP server…")
+    print("Starting Career Advisor MCP server...")
     try:
         subprocess.run([sys.executable, "-m", "backend.mcp_server"], check=True)
     except subprocess.CalledProcessError as exc:
-        print(f"❌ Failed to start MCP server: {exc}")
+        print(f"[X] Failed to start MCP server: {exc}")
         sys.exit(1)
     except KeyboardInterrupt:
-        print("\n👋 MCP server stopped")
+        print("\nMCP server stopped")
 
 
 def run_cli() -> None:
-    print("🚀 Starting CLI interface…")
+    print("Starting CLI interface...")
     try:
         subprocess.run([sys.executable, "-m", "backend.main"], check=True)
     except subprocess.CalledProcessError as exc:
-        print(f"❌ Failed to start CLI: {exc}")
+        print(f"[X] Failed to start CLI: {exc}")
         sys.exit(1)
     except KeyboardInterrupt:
-        print("\n👋 CLI stopped")
+        print("\nCLI stopped")
 
 
 def install_requirements() -> None:
-    print("📦 Installing backend requirements…")
+    req_path = "backend/requirements.txt" if os.path.exists("backend/requirements.txt") else "requirements.txt"
+    print(f"Installing backend requirements from {req_path}...")
     try:
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"], check=True
+            [sys.executable, "-m", "pip", "install", "-r", req_path], check=True
         )
-        print("✅ Backend requirements installed successfully")
+        print("[OK] Backend requirements installed successfully")
     except subprocess.CalledProcessError as exc:
-        print(f"❌ Failed to install requirements: {exc}")
+        print(f"[X] Failed to install requirements: {exc}")
         sys.exit(1)
 
 
 def create_sample_env() -> None:
     if os.path.exists(".env"):
-        print("⚠️  .env already exists")
+        print("[!] .env already exists")
         if input("Overwrite it? (y/N): ").strip().lower() != "y":
-            print("❌ Cancelled")
+            print("[X] Cancelled")
             return
 
     with open(".env.example") as src, open(".env", "w") as dst:
         dst.write(src.read())
 
-    print("✅ Created .env from .env.example")
-    print("🔧 Edit .env and add your Google API key")
+    print("[OK] Created .env from .env.example")
+    print("Edit .env and add your API key (GROQ_API_KEY or GOOGLE_API_KEY)")
 
 
 def show_status() -> None:
-    print("📊 Career Advisor Project Status")
+    print("Career Advisor Project Status")
     print("=" * 40)
 
     for file in [
         "requirements.txt",
+        "backend/requirements.txt",
         "backend/__init__.py",
         "backend/server.py",
         "backend/main.py",
@@ -138,18 +149,19 @@ def show_status() -> None:
         "backend/evaluation.py",
         "frontend/package.json",
     ]:
-        print(f"✅ {file}" if os.path.exists(file) else f"❌ {file}")
+        print(f"[OK] {file}" if os.path.exists(file) else f"[X] {file}")
 
     if os.path.exists(".env"):
-        print("✅ .env")
+        print("[OK] .env")
         check_env()
     else:
-        print("❌ .env (run: python run.py setup)")
+        print("[X] .env (run: python app.py setup)")
 
-    print("\n📦 Package status:")
+    print("\nPackage status:")
     for pkg in [
         "fastapi",
         "uvicorn",
+        "groq",
         "google-genai",
         "langchain",
         "chromadb",
@@ -163,9 +175,9 @@ def show_status() -> None:
         )
         try:
             __import__(module)
-            print(f"✅ {pkg}")
+            print(f"[OK] {pkg}")
         except ImportError:
-            print(f"❌ {pkg}")
+            print(f"[X] {pkg}")
 
 
 def main() -> None:
@@ -173,23 +185,14 @@ def main() -> None:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=["api", "frontend", "cli", "mcp", "install", "setup", "status", "doctor"],
+        default="api",
+        choices=["api", "cli", "mcp", "install", "setup", "status", "doctor"],
+        help="Command to run (default: api - launches app on port 8000)",
     )
+    parser.add_argument("--host", default="127.0.0.1", help="Host to bind server (default: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=8000, help="Port to bind server (default: 8000)")
+    parser.add_argument("--no-reload", action="store_true", help="Disable auto-reload in development")
     args = parser.parse_args()
-
-    if not args.command:
-        print("🧭 Career Advisor")
-        print("Usage: python run.py [api|frontend|cli|mcp|install|setup|status]")
-        print("  - api:      Launch FastAPI backend server (http://localhost:8000)")
-        print("  - frontend: Launch Next.js web application (http://localhost:3000)")
-        print("  - cli:      Launch interactive terminal CLI")
-        print("  - mcp:      Launch Model Context Protocol server")
-        print("  - status:   Verify environment and package dependencies")
-        print("  - doctor:   Live preflight — calls Gemini with your key to prove")
-        print("              the app can actually generate responses")
-        print("  - install:  Install Python dependencies from requirements.txt")
-        print("  - setup:    Initialize .env file from .env.example")
-        return
 
     if args.command == "doctor":
         from backend.doctor import main as doctor_main
@@ -204,9 +207,7 @@ def main() -> None:
     elif args.command == "api":
         if not check_requirements() or not check_env():
             sys.exit(1)
-        run_api()
-    elif args.command == "frontend":
-        run_frontend()
+        run_api(host=args.host, port=args.port, reload=not args.no_reload)
     elif args.command == "cli":
         if not check_requirements() or not check_env():
             sys.exit(1)
