@@ -3,7 +3,7 @@ services:
   - type: web
     name: career-advisor-api
     runtime: python
-    plan: starter                     # free tier has no persistent disk support
+    plan: free                        # Free tier: no persistent disk, spins down after ~15 min idle
     buildCommand: pip install -r backend/requirements.txt
     startCommand: python app.py api --host 0.0.0.0 --port $PORT --no-reload
     healthCheckPath: /api/status
@@ -16,28 +16,25 @@ services:
         sync: false                   # set secret value in Render dashboard
       - key: GROQ_MODEL
         value: groq-latest
+      
       - key: CHROMA_PERSIST_DIR
-        value: /data/chroma_db
+        value: chroma_db
       - key: HF_HOME
-        value: /data/hf_cache
+        value: hf_cache
       - key: SENTENCE_TRANSFORMERS_HOME
-        value: /data/hf_cache
+        value: hf_cache
       - key: AUTO_INDEX_DEFAULT_DOCUMENT
         value: "true"
       - key: LLM_REQUEST_TIMEOUT_SECONDS
         value: "60"
       - key: LLM_MAX_RETRIES
         value: "3"
-    disk:
-      name: career-advisor-data
-      mountPath: /data
-      sizeGB: 1
 
   # ---------------- Frontend ----------------
   - type: web
     name: career-advisor-web
     runtime: node
-    plan: starter
+    plan: free
     rootDir: frontend
     buildCommand: npm install && npm run build
     startCommand: npm run preview -- --host 0.0.0.0 --port $PORT
