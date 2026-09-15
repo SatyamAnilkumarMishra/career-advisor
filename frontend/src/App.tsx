@@ -231,12 +231,6 @@ export default function Home() {
       const res = await uploadResumeFile(file);
       setResumeFilename(res.filename);
       setResumeText(res.text);
-
-      const confirmMsg: ChatMessage = {
-        role: 'assistant',
-        content: `📁 **Resume Loaded:** *${res.filename}* (${(res.size_bytes / 1024).toFixed(1)} KB) has been parsed and loaded into Agent Memory. You can run the **Resume Analyzer** or ask questions about your background.`,
-      };
-      setMessages((prev) => [...prev, confirmMsg]);
       showToast('Resume uploaded successfully');
     } catch (err: unknown) {
       const msg = getErrorMessage(err, 'Could not parse that resume.');
@@ -288,7 +282,7 @@ export default function Home() {
       .catch((err) => console.warn('Search history save:', err));
 
     try {
-      const res = await sendChatMessage(query, messages, buildStudentProfile(resumeText));
+      const res = await sendChatMessage(query, messages, '');
       const assistantMsg: ChatMessage = {
         role: 'assistant',
         content: res.text,
