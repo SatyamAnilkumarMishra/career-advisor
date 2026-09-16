@@ -65,18 +65,34 @@ def validate_pdf(file_path: str, *, max_size_bytes: int) -> None:
 
 
 def _build_embeddings():
+    # Uses Hugging Face's hosted Inference API instead of loading the model
+    # (and torch) into this process's own memory. That local-loading path was
+    # crashing the backend on Render's free tier (512MB RAM) — see the
+    # "Known Limitations" note in README.md. This makes a lightweight HTTP
+    # call per embedding instead, so no heavy ML framework needs to be
+    # imported or held in memory here.
+    #
+    # Requires HF_TOKEN to be set (a free Hugging Face access token —
+    # https://huggingface.co/settings/tokens, "read" scope is enough).
     try:
-        from langchain_huggingface import HuggingFaceEmbeddings
+        from langchain_huggingface import HuggingFaceEndpointEmbeddings
     except ImportError as exc:  # pragma: no cover
         raise VectorStoreError(
             "Required embedding dependencies are not installed. "
             "Run: pip install -r requirements.txt"
         ) from exc
 
-    return HuggingFaceEmbeddings(
-        model_name=_EMBEDDING_MODEL_NAME,
-        model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": True},
+    hf_token = os.environ.get("HF_TOKEN")
+    if not hf_token:
+        raise VectorStoreError(
+            "HF_TOKEN is not set. Get a free token at "
+            "https://huggingface.co/settings/tokens and set it as an "
+            "environment variable to enable document indexing."
+        )
+
+    return HuggingFaceEndpointEmbeddings(
+        model=_EMBEDDING_MODEL_NAME,
+        huggingfacehub_api_token=hf_token,
     )
 
 
