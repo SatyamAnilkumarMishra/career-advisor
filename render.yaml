@@ -1,0 +1,45 @@
+services:
+  # ---------------- Backend (FastAPI) ----------------
+  - type: web
+    name: career-advisor-api
+    runtime: python
+    plan: free                        # Free tier: no persistent disk, spins down after ~15 min idle
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: python -m uvicorn backend.server:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /api/status
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: LLM_PROVIDER
+        value: groq
+      - key: GROQ_API_KEY
+        sync: false                   # set secret value in Render dashboard
+      - key: GROQ_MODEL
+        value: groq-latest
+
+      - key: CHROMA_PERSIST_DIR
+        value: chroma_db
+      - key: HF_HOME
+        value: hf_cache
+      - key: SENTENCE_TRANSFORMERS_HOME
+        value: hf_cache
+      - key: AUTO_INDEX_DEFAULT_DOCUMENT
+        value: "true"
+      - key: LLM_REQUEST_TIMEOUT_SECONDS
+        value: "60"
+      - key: LLM_MAX_RETRIES
+        value: "3"
+
+  - type: web
+    runtime: static
+    name: career-advisor-web
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://career-advisor-api.onrender.com
