@@ -8,6 +8,9 @@ import backend.server as server
 from backend.server import app, state
 
 
+AUTH_HEADERS = {"Authorization": "Bearer dev-token:test-user:Test User:test@example.com"}
+
+
 def test_status_endpoint():
     client = TestClient(app)
     response = client.get("/api/status")
@@ -15,6 +18,14 @@ def test_status_endpoint():
     data = response.json()
     assert data["status"] == "online"
     assert "model" in data
+
+
+def test_endpoints_require_authentication():
+    client = TestClient(app)
+    # Protected endpoints must return 401 without Bearer token
+    assert client.get("/api/history").status_code == 401
+    assert client.post("/api/chat", json={"query": "test"}).status_code == 401
+    assert client.post("/api/jobs/search", json={"role": "Engineer"}).status_code == 401
 
 
 def test_chat_endpoint():
@@ -34,6 +45,7 @@ def test_chat_endpoint():
     client = TestClient(app)
     response = client.post(
         "/api/chat",
+        headers=AUTH_HEADERS,
         json={"query": "How to become an ML engineer?", "history": []},
     )
     assert response.status_code == 200
@@ -58,6 +70,7 @@ def test_chat_endpoint_rejects_off_topic_query():
     client = TestClient(app)
     response = client.post(
         "/api/chat",
+        headers=AUTH_HEADERS,
         json={"query": "who is the prime minister of India", "history": []},
     )
 
@@ -77,6 +90,7 @@ def test_job_search_endpoint():
     client = TestClient(app)
     response = client.post(
         "/api/jobs/search",
+        headers=AUTH_HEADERS,
         json={"role": "Engineer"},
     )
     assert response.status_code == 200
@@ -87,35 +101,35 @@ def test_job_search_endpoint():
 def test_history_endpoints():
     client = TestClient(app)
     # Clear initial
-    client.delete("/api/history")
+    client.delete("/api/history", headers=AUTH_HEADERS)
 
     # Add item
-    res = client.post("/api/history", json={"query": "I want to be a nurse"})
+    res = client.post("/api/history", headers=AUTH_HEADERS, json={"query": "I want to be a nurse"})
     assert res.status_code == 200
     item = res.json()
     assert item["query"] == "I want to be a nurse"
     assert "id" in item
 
     # Get history
-    res = client.get("/api/history")
+    res = client.get("/api/history", headers=AUTH_HEADERS)
     assert res.status_code == 200
     items = res.json()
     assert len(items) == 1
     assert items[0]["id"] == item["id"]
 
     # Delete specific item
-    res = client.delete(f"/api/history/{item['id']}")
+    res = client.delete(f"/api/history/{item['id']}", headers=AUTH_HEADERS)
     assert res.status_code == 200
     assert res.json()["success"] is True
 
     # Verify empty
-    res = client.get("/api/history")
+    res = client.get("/api/history", headers=AUTH_HEADERS)
     assert len(res.json()) == 0
 
 
 def test_clear_conversation_endpoint():
     client = TestClient(app)
-    res = client.post("/api/chat/clear")
+    res = client.post("/api/chat/clear", headers=AUTH_HEADERS)
     assert res.status_code == 200
     assert res.json()["success"] is True
 
