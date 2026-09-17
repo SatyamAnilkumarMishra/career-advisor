@@ -5,6 +5,7 @@ python-multipart>=0.0.9
 google-genai>=1.0.0
 groq>=0.9.0
 python-dotenv>=1.0.0
+firebase-admin>=6.5.0
 
 # RAG pipeline
 langchain>=0.1.0
