@@ -20,10 +20,12 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from backend import firestore_db
+from backend.auth import AuthUser, get_current_user
 from backend.career_tools import (
     analyze_resume,
     analyze_skill_gap,
@@ -252,67 +254,72 @@ def get_status() -> dict[str, Any]:
     }
 
 
+@app.get("/api/auth/me")
+def get_current_user_profile(user: AuthUser = Depends(get_current_user)) -> dict[str, Any]:
+    """Return authenticated user profile and sync to Firestore."""
+    profile = firestore_db.upsert_user_profile(
+        uid=user.uid,
+        email=user.email,
+        display_name=user.display_name,
+        photo_url=user.photo_url,
+    )
+    return profile
+
+
 @app.get("/api/history", response_model=list[HistoryItem])
-def get_history() -> list[HistoryItem]:
-    return [HistoryItem(**item) for item in state.search_history]
+def get_history(user: AuthUser = Depends(get_current_user)) -> list[HistoryItem]:
+    """Retrieve search history items strictly belonging to the authenticated user."""
+    items = firestore_db.get_user_history(user.uid)
+    return [HistoryItem(**item) for item in items]
 
 
 @app.post("/api/history", response_model=HistoryItem)
-def add_history_item(payload: AddHistoryRequest) -> HistoryItem:
+def add_history_item(payload: AddHistoryRequest, user: AuthUser = Depends(get_current_user)) -> HistoryItem:
+    """Add a search history entry isolated to the authenticated user."""
     query = payload.query.strip()
     if not query:
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
-    # Don't add duplicate recent queries
-    existing = [h for h in state.search_history if h["query"].lower() == query.lower()]
-    if existing:
-        return HistoryItem(**existing[0])
-    
-    item = {
-        "id": str(uuid.uuid4()),
-        "query": query,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    state.search_history.insert(0, item)
+    item = firestore_db.add_user_history_item(user.uid, query)
     return HistoryItem(**item)
 
 
 @app.delete("/api/history/{item_id}")
-def delete_history_item(item_id: str) -> dict[str, Any]:
-    initial_len = len(state.search_history)
-    state.search_history = [h for h in state.search_history if h["id"] != item_id]
-    if len(state.search_history) == initial_len:
+def delete_history_item(item_id: str, user: AuthUser = Depends(get_current_user)) -> dict[str, Any]:
+    """Delete a history item belonging to the authenticated user."""
+    success = firestore_db.delete_user_history_item(user.uid, item_id)
+    if not success:
         raise HTTPException(status_code=404, detail="History item not found.")
     return {"success": True, "deleted_id": item_id}
 
 
 @app.delete("/api/history")
-def clear_all_history() -> dict[str, Any]:
-    state.search_history = []
+def clear_all_history(user: AuthUser = Depends(get_current_user)) -> dict[str, Any]:
+    """Clear all history for the authenticated user without affecting others."""
+    firestore_db.clear_user_history(user.uid)
     return {"success": True, "message": "All history cleared."}
 
 
+@app.get("/api/chat/messages")
+def get_chat_messages(user: AuthUser = Depends(get_current_user)) -> list[dict[str, Any]]:
+    """Retrieve current conversation messages for the authenticated user."""
+    return firestore_db.get_user_conversation(user.uid)
+
+
 @app.post("/api/chat/clear")
-def clear_conversation() -> dict[str, Any]:
+def clear_conversation(user: AuthUser = Depends(get_current_user)) -> dict[str, Any]:
+    """Clear conversation session for the authenticated user."""
+    firestore_db.clear_user_conversation(user.uid)
     return {"success": True, "message": "Conversation session cleared."}
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-def chat_endpoint(payload: ChatRequest) -> ChatResponse:
+def chat_endpoint(payload: ChatRequest, user: AuthUser = Depends(get_current_user)) -> ChatResponse:
+    """User-isolated RAG chat. Messages and queries are scoped exclusively to user.uid."""
     settings, service, _ = _require_service()
     try:
-        # Automatically record to search history
         trimmed_query = payload.query.strip()
         if trimmed_query:
-            existing = [h for h in state.search_history if h["query"].lower() == trimmed_query.lower()]
-            if not existing:
-                state.search_history.insert(
-                    0,
-                    {
-                        "id": str(uuid.uuid4()),
-                        "query": trimmed_query,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    },
-                )
+            firestore_db.add_user_history_item(user.uid, trimmed_query)
 
         messages = [
             ChatMessage(role="user" if m.role == "user" else "assistant", content=m.content)
@@ -323,6 +330,15 @@ def chat_endpoint(payload: ChatRequest) -> ChatResponse:
             history=messages,
             student_profile=payload.student_profile,
         )
+
+        # Persist conversation state for this user in Firestore
+        full_conversation = [
+            *[{"role": m.role, "content": m.content} for m in payload.history],
+            {"role": "user", "content": payload.query},
+            {"role": "assistant", "content": result.text},
+        ]
+        firestore_db.save_user_conversation(user.uid, full_conversation)
+
         sources = [
             SourceItem(
                 content=s.content,
@@ -343,7 +359,11 @@ def chat_endpoint(payload: ChatRequest) -> ChatResponse:
 
 
 @app.post("/api/resume/upload")
-async def upload_resume(file: UploadFile = File(...)) -> dict[str, Any]:  # noqa: B008
+async def upload_resume(
+    file: UploadFile = File(...),
+    user: AuthUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Upload and extract resume text for authenticated user."""
     settings = state.settings or get_settings()
     suffix = os.path.splitext(file.filename or "")[1].lower() or ".pdf"
 
@@ -355,6 +375,7 @@ async def upload_resume(file: UploadFile = File(...)) -> dict[str, Any]:  # noqa
 
         try:
             text = extract_resume_text(tmp_path, settings)
+            firestore_db.save_user_resume_data(user.uid, file.filename or "resume.pdf", text)
             return {
                 "filename": file.filename,
                 "text": text,
@@ -370,7 +391,11 @@ async def upload_resume(file: UploadFile = File(...)) -> dict[str, Any]:  # noqa
 
 
 @app.post("/api/resume/analyze", response_model=ResumeAnalysisResponse)
-def analyze_resume_endpoint(payload: ResumeAnalyzeRequest) -> ResumeAnalysisResponse:
+def analyze_resume_endpoint(
+    payload: ResumeAnalyzeRequest,
+    user: AuthUser = Depends(get_current_user),
+) -> ResumeAnalysisResponse:
+    """Analyze resume and save analysis exclusively to user.uid."""
     settings = state.settings or get_settings()
     llm = state.llm
     if llm is None:
@@ -383,13 +408,20 @@ def analyze_resume_endpoint(payload: ResumeAnalyzeRequest) -> ResumeAnalysisResp
             llm,
             target_role=payload.target_role or None,
         )
-        return ResumeAnalysisResponse(
+        response_data = ResumeAnalysisResponse(
             extracted_skills=result.extracted_skills,
             experience_summary=result.experience_summary,
             strengths=result.strengths,
             gaps_or_improvements=result.gaps_or_improvements,
             suggested_target_roles=result.suggested_target_roles,
         )
+        firestore_db.save_user_resume_data(
+            user.uid,
+            filename="resume",
+            text=payload.resume_text,
+            analysis=response_data.model_dump(),
+        )
+        return response_data
     except CareerAdvisorError as exc:
         raise HTTPException(status_code=400, detail=exc.user_message) from exc
     except Exception as exc:
@@ -397,17 +429,28 @@ def analyze_resume_endpoint(payload: ResumeAnalyzeRequest) -> ResumeAnalysisResp
 
 
 @app.post("/api/skill-gap", response_model=SkillGapResponse)
-def skill_gap_endpoint(payload: SkillGapRequest) -> SkillGapResponse:
+def skill_gap_endpoint(
+    payload: SkillGapRequest,
+    user: AuthUser = Depends(get_current_user),
+) -> SkillGapResponse:
+    """Analyze skill gap and store under user.uid."""
     _, _, llm = _require_service()
     try:
         result = analyze_skill_gap(payload.skills, payload.target_role, llm)
-        return SkillGapResponse(
+        response_data = SkillGapResponse(
             matched_skills=result.matched_skills,
             missing_skills=result.missing_skills,
             partially_met_skills=result.partially_met_skills,
             overall_readiness=result.overall_readiness,
             summary=result.summary,
         )
+        firestore_db.save_user_skill_gap(
+            user.uid,
+            target_role=payload.target_role,
+            skills=payload.skills,
+            result=response_data.model_dump(),
+        )
+        return response_data
     except CareerAdvisorError as exc:
         raise HTTPException(status_code=400, detail=exc.user_message) from exc
     except Exception as exc:
@@ -415,7 +458,11 @@ def skill_gap_endpoint(payload: SkillGapRequest) -> SkillGapResponse:
 
 
 @app.post("/api/roadmap", response_model=RoadmapResponse)
-def roadmap_endpoint(payload: RoadmapRequest) -> RoadmapResponse:
+def roadmap_endpoint(
+    payload: RoadmapRequest,
+    user: AuthUser = Depends(get_current_user),
+) -> RoadmapResponse:
+    """Generate roadmap and store under user.uid."""
     _, _, llm = _require_service()
     try:
         result = generate_roadmap(
@@ -424,7 +471,7 @@ def roadmap_endpoint(payload: RoadmapRequest) -> RoadmapResponse:
             llm,
             timeframe_months=payload.timeframe_months,
         )
-        return RoadmapResponse(
+        response_data = RoadmapResponse(
             target_role=result.target_role,
             milestones=[
                 RoadmapMilestoneItem(
@@ -437,6 +484,14 @@ def roadmap_endpoint(payload: RoadmapRequest) -> RoadmapResponse:
             ],
             summary=result.summary,
         )
+        firestore_db.save_user_roadmap(
+            user.uid,
+            target_role=payload.target_role,
+            skills=payload.skills,
+            timeframe=payload.timeframe_months,
+            result=response_data.model_dump(),
+        )
+        return response_data
     except CareerAdvisorError as exc:
         raise HTTPException(status_code=400, detail=exc.user_message) from exc
     except Exception as exc:
@@ -444,7 +499,11 @@ def roadmap_endpoint(payload: RoadmapRequest) -> RoadmapResponse:
 
 
 @app.post("/api/jobs/search", response_model=list[JobItem])
-def search_jobs_endpoint(payload: JobSearchRequest) -> list[JobItem]:
+def search_jobs_endpoint(
+    payload: JobSearchRequest,
+    user: AuthUser = Depends(get_current_user),
+) -> list[JobItem]:
+    """Search jobs for authenticated user."""
     settings, _, _ = _require_service()
     try:
         jobs = search_jobs(
@@ -475,7 +534,11 @@ def search_jobs_endpoint(payload: JobSearchRequest) -> list[JobItem]:
 
 
 @app.post("/api/documents/upload")
-async def upload_document(file: UploadFile = File(...)) -> dict[str, Any]:  # noqa: B008
+async def upload_document(
+    file: UploadFile = File(...),
+    user: AuthUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Upload reference PDF document for knowledge base indexing."""
     settings, service, _ = _require_service()
     suffix = os.path.splitext(file.filename or "")[1].lower()
     if suffix != ".pdf":
@@ -504,6 +567,16 @@ async def upload_document(file: UploadFile = File(...)) -> dict[str, Any]:  # no
         raise HTTPException(status_code=400, detail=exc.user_message) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=safe_error_message(exc)) from exc
+
+
+@app.get("/api/user-data/latest")
+def get_user_latest_data(user: AuthUser = Depends(get_current_user)) -> dict[str, Any]:
+    """Retrieve the latest saved resume, skill gap, and roadmap data for the user."""
+    return {
+        "resume": firestore_db.get_user_resume_data(user.uid),
+        "skill_gap": firestore_db._get_local_user_bucket(user.uid).get("skill_gap"),
+        "roadmap": firestore_db._get_local_user_bucket(user.uid).get("roadmap"),
+    }
 
 
 # ---------------------------------------------------------------------------
