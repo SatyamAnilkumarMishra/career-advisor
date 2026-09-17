@@ -13,6 +13,24 @@ import {
 // seamlessly without CORS or localhost/127.0.0.1 IPv4/IPv6 mismatch.
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? '';
 
+let _authToken: string | null = null;
+
+export function setAuthToken(token: string | null): void {
+  _authToken = token;
+}
+
+export function getAuthToken(): string | null {
+  return _authToken;
+}
+
+function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (_authToken) {
+    headers['Authorization'] = `Bearer ${_authToken}`;
+  }
+  return headers;
+}
+
 /**
  * Narrow an unknown thrown value to a displayable message.
  *
@@ -47,7 +65,9 @@ async function handleResponse<T>(res: Response): Promise<T> {
     }
 
     if (!parsedJson) {
-      if (res.status === 404) {
+      if (res.status === 401) {
+        errorMsg = 'Your session has expired or you are not logged in. Please sign in again.';
+      } else if (res.status === 404) {
         errorMsg = 'Backend server endpoint not found (404). Please ensure the backend is running with "python app.py api".';
       } else if (res.status === 502 || res.status === 503 || res.status === 504) {
         errorMsg = `Backend server is temporarily unavailable (${res.status}). Please run "python app.py api" to start the backend.`;
@@ -60,8 +80,24 @@ async function handleResponse<T>(res: Response): Promise<T> {
 }
 
 export async function fetchStatus(): Promise<StatusResponse> {
-  const res = await fetch(`${API_BASE}/api/status`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/api/status`, {
+    headers: { ...getAuthHeaders() },
+    cache: 'no-store',
+  });
   return handleResponse<StatusResponse>(res);
+}
+
+export async function fetchCurrentUser(): Promise<{
+  uid: string;
+  email: string | null;
+  display_name: string | null;
+  photo_url: string | null;
+}> {
+  const res = await fetch(`${API_BASE}/api/auth/me`, {
+    headers: { ...getAuthHeaders() },
+    cache: 'no-store',
+  });
+  return handleResponse(res);
 }
 
 export async function sendChatMessage(
@@ -71,7 +107,10 @@ export async function sendChatMessage(
 ): Promise<{ text: string; used_retrieval: boolean; sources: SourceItem[] }> {
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
     body: JSON.stringify({
       query,
       history: history.map((m) => ({ role: m.role, content: m.content })),
@@ -87,6 +126,7 @@ export async function uploadResumeFile(file: File): Promise<ResumeUploadResponse
 
   const res = await fetch(`${API_BASE}/api/resume/upload`, {
     method: 'POST',
+    headers: { ...getAuthHeaders() },
     body: formData,
   });
   return handleResponse<ResumeUploadResponse>(res);
@@ -98,7 +138,10 @@ export async function analyzeResume(
 ): Promise<ResumeAnalysis> {
   const res = await fetch(`${API_BASE}/api/resume/analyze`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
     body: JSON.stringify({
       resume_text: resumeText,
       target_role: targetRole || null,
@@ -113,7 +156,10 @@ export async function analyzeSkillGap(
 ): Promise<SkillGapResult> {
   const res = await fetch(`${API_BASE}/api/skill-gap`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
     body: JSON.stringify({
       skills,
       target_role: targetRole,
@@ -129,7 +175,10 @@ export async function generateRoadmap(
 ): Promise<RoadmapResult> {
   const res = await fetch(`${API_BASE}/api/roadmap`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
     body: JSON.stringify({
       skills,
       target_role: targetRole,
@@ -148,7 +197,10 @@ export async function searchJobs(params: {
 }): Promise<JobListing[]> {
   const res = await fetch(`${API_BASE}/api/jobs/search`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
     body: JSON.stringify(params),
   });
   return handleResponse<JobListing[]>(res);
@@ -162,20 +214,27 @@ export async function uploadDocumentFile(
 
   const res = await fetch(`${API_BASE}/api/documents/upload`, {
     method: 'POST',
+    headers: { ...getAuthHeaders() },
     body: formData,
   });
   return handleResponse(res);
 }
 
 export async function fetchHistory(): Promise<{ id: string; query: string; timestamp: string }[]> {
-  const res = await fetch(`${API_BASE}/api/history`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/api/history`, {
+    headers: { ...getAuthHeaders() },
+    cache: 'no-store',
+  });
   return handleResponse(res);
 }
 
 export async function addHistoryItem(query: string): Promise<{ id: string; query: string; timestamp: string }> {
   const res = await fetch(`${API_BASE}/api/history`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
     body: JSON.stringify({ query }),
   });
   return handleResponse(res);
@@ -184,6 +243,7 @@ export async function addHistoryItem(query: string): Promise<{ id: string; query
 export async function deleteHistoryItem(id: string): Promise<{ success: boolean; deleted_id: string }> {
   const res = await fetch(`${API_BASE}/api/history/${item_id_param(id)}`, {
     method: 'DELETE',
+    headers: { ...getAuthHeaders() },
   });
   return handleResponse(res);
 }
@@ -195,6 +255,7 @@ function item_id_param(id: string): string {
 export async function clearAllHistory(): Promise<{ success: boolean }> {
   const res = await fetch(`${API_BASE}/api/history`, {
     method: 'DELETE',
+    headers: { ...getAuthHeaders() },
   });
   return handleResponse(res);
 }
@@ -202,6 +263,19 @@ export async function clearAllHistory(): Promise<{ success: boolean }> {
 export async function clearConversation(): Promise<{ success: boolean }> {
   const res = await fetch(`${API_BASE}/api/chat/clear`, {
     method: 'POST',
+    headers: { ...getAuthHeaders() },
+  });
+  return handleResponse(res);
+}
+
+export async function fetchUserLatestData(): Promise<{
+  resume: any;
+  skill_gap: any;
+  roadmap: any;
+}> {
+  const res = await fetch(`${API_BASE}/api/user-data/latest`, {
+    headers: { ...getAuthHeaders() },
+    cache: 'no-store',
   });
   return handleResponse(res);
 }
