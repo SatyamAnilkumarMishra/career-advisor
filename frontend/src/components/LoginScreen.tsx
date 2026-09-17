@@ -1,29 +1,75 @@
 import React, { useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { Compass, AlertCircle } from 'lucide-react';
+import { Compass, AlertCircle, Mail, Lock, User, Eye, EyeOff } from 'lucide-react';
+
+type AuthMode = 'signin' | 'register';
 
 export const LoginScreen: React.FC = () => {
-  const { loginWithGoogle, loading } = useAuth();
+  const { loginWithGoogle, loginWithEmail, registerWithEmail, loading } = useAuth();
+
+  const [mode, setMode] = useState<AuthMode>('signin');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
-  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const switchMode = (newMode: AuthMode) => {
+    setMode(newMode);
+    setError(null);
+  };
+
+  const handleFormSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
+      setError('Please enter your email or Gmail address.');
+      return;
+    }
+    if (!password) {
+      setError('Please enter your password.');
+      return;
+    }
+    if (mode === 'register' && password.length < 6) {
+      setError('Password must be at least 6 characters long.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      if (mode === 'signin') {
+        await loginWithEmail(cleanEmail, password);
+      } else {
+        await registerWithEmail(cleanEmail, password, displayName);
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Authentication failed. Please check your credentials.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleGoogleLogin = async () => {
     setError(null);
-    setIsSigningIn(true);
+    setIsSubmitting(true);
     try {
       await loginWithGoogle();
     } catch (err: any) {
       setError(err?.message || 'Unable to sign in with Google. Please try again.');
     } finally {
-      setIsSigningIn(false);
+      setIsSubmitting(false);
     }
   };
 
-  const isBusy = loading || isSigningIn;
+  const isBusy = loading || isSubmitting;
 
   return (
     <div className="auth-page-container">
-      {/* Subtle ambient lighting */}
+      {/* Ambient background lighting */}
       <div className="auth-ambient-glow" aria-hidden="true" />
 
       {/* Centered Authentication Card */}
@@ -33,11 +79,39 @@ export const LoginScreen: React.FC = () => {
           <Compass size={28} color="#080808" strokeWidth={2.2} />
         </div>
 
-        {/* Clean, natural product headings */}
-        <h1 className="auth-heading">Welcome back</h1>
+        {/* Dynamic Headings based on mode */}
+        <h1 className="auth-heading">
+          {mode === 'signin' ? 'Welcome back' : 'Create an account'}
+        </h1>
         <p className="auth-subheading">
-          Sign in to continue to your Career Advisor workspace.
+          {mode === 'signin'
+            ? 'Sign in to continue to your Career Advisor workspace.'
+            : 'Sign up to start your personalized Career Advisor journey.'}
         </p>
+
+        {/* Mode Switcher Tabs */}
+        <div className="auth-tabs" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'signin'}
+            className={`auth-tab-btn ${mode === 'signin' ? 'active' : ''}`}
+            onClick={() => switchMode('signin')}
+            disabled={isBusy}
+          >
+            Sign In
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'register'}
+            className={`auth-tab-btn ${mode === 'register' ? 'active' : ''}`}
+            onClick={() => switchMode('register')}
+            disabled={isBusy}
+          >
+            Register
+          </button>
+        </div>
 
         {/* Actionable Error Banner */}
         {error && (
@@ -46,6 +120,101 @@ export const LoginScreen: React.FC = () => {
             <span>{error}</span>
           </div>
         )}
+
+        {/* Email & Password Authentication Form */}
+        <form onSubmit={handleFormSubmit} className="auth-form" noValidate>
+          {mode === 'register' && (
+            <div className="auth-field-group">
+              <label htmlFor="auth-name" className="auth-label">
+                Full Name (Optional)
+              </label>
+              <div className="auth-input-wrapper">
+                <User className="auth-input-icon" aria-hidden="true" />
+                <input
+                  id="auth-name"
+                  type="text"
+                  placeholder="e.g. Alex Morgan"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  disabled={isBusy}
+                  className="auth-input"
+                  autoComplete="name"
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="auth-field-group">
+            <label htmlFor="auth-email" className="auth-label">
+              Email / Gmail Address
+            </label>
+            <div className="auth-input-wrapper">
+              <Mail className="auth-input-icon" aria-hidden="true" />
+              <input
+                id="auth-email"
+                type="email"
+                placeholder="you@gmail.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={isBusy}
+                className="auth-input"
+                autoComplete="email"
+                required
+              />
+            </div>
+          </div>
+
+          <div className="auth-field-group">
+            <label htmlFor="auth-password" className="auth-label">
+              Password {mode === 'register' && '(min. 6 characters)'}
+            </label>
+            <div className="auth-input-wrapper">
+              <Lock className="auth-input-icon" aria-hidden="true" />
+              <input
+                id="auth-password"
+                type={showPassword ? 'text' : 'password'}
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={isBusy}
+                className="auth-input has-toggle"
+                autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((prev) => !prev)}
+                className="auth-password-toggle"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                tabIndex={-1}
+              >
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={isBusy}
+            className="auth-submit-btn"
+          >
+            {isBusy ? (
+              <>
+                <span className="auth-submit-spinner" aria-hidden="true" />
+                <span>{mode === 'signin' ? 'Signing in...' : 'Creating account...'}</span>
+              </>
+            ) : (
+              <span>{mode === 'signin' ? 'Sign In' : 'Create Account'}</span>
+            )}
+          </button>
+        </form>
+
+        {/* Divider */}
+        <div className="auth-divider" aria-hidden="true">
+          <div className="auth-divider-line" />
+          <span className="auth-divider-text">or continue with</span>
+          <div className="auth-divider-line" />
+        </div>
 
         {/* Google Sign-in Button */}
         <button
@@ -58,7 +227,7 @@ export const LoginScreen: React.FC = () => {
           {isBusy ? (
             <>
               <span className="auth-spinner" aria-hidden="true" />
-              <span>Signing in...</span>
+              <span>Connecting...</span>
             </>
           ) : (
             <>
@@ -85,10 +254,39 @@ export const LoginScreen: React.FC = () => {
           )}
         </button>
 
+        {/* Quick Mode Switch Link */}
+        <div className="auth-switch-mode">
+          {mode === 'signin' ? (
+            <span>
+              Don't have an account?{' '}
+              <button
+                type="button"
+                className="auth-switch-link"
+                onClick={() => switchMode('register')}
+                disabled={isBusy}
+              >
+                Create one
+              </button>
+            </span>
+          ) : (
+            <span>
+              Already have an account?{' '}
+              <button
+                type="button"
+                className="auth-switch-link"
+                onClick={() => switchMode('signin')}
+                disabled={isBusy}
+              >
+                Sign In
+              </button>
+            </span>
+          )}
+        </div>
+
         {/* Minimal Footer */}
         <div className="auth-card-footer">
           <p className="auth-footer-note">
-            Secure authentication powered by Google
+            Secure authentication powered by Firebase & Google
           </p>
         </div>
       </div>
