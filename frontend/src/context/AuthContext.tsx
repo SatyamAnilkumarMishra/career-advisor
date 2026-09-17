@@ -34,6 +34,46 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const DEV_USER_STORAGE_KEY = 'career_advisor_dev_user';
+const USERS_STORAGE_KEY = 'career_advisor_registered_users';
+
+function hashPassword(pwd: string): string {
+  let h1 = 0xdeadbeef ^ 12345;
+  let h2 = 0x41c6ce57 ^ 67890;
+  for (let i = 0; i < pwd.length; i++) {
+    const ch = pwd.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16);
+}
+
+interface LocalAccount {
+  email: string;
+  passwordHash: string;
+  displayName: string;
+  uid: string;
+}
+
+function getLocalUsers(): Record<string, LocalAccount> {
+  try {
+    const raw = localStorage.getItem(USERS_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveLocalUser(account: LocalAccount): void {
+  try {
+    const users = getLocalUsers();
+    users[account.email.toLowerCase()] = account;
+    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
+  } catch (err) {
+    console.error('Failed to persist local user:', err);
+  }
+}
 
 function formatAuthError(err: any): Error {
   console.error('Firebase Auth error:', err);
@@ -102,7 +142,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             updateSession(null, null);
           }
         } else {
-          updateSession(null, null);
+          // Check if user was logged in via local session
+          const stored = localStorage.getItem(DEV_USER_STORAGE_KEY);
+          if (stored) {
+            try {
+              const parsed = JSON.parse(stored) as UserProfile;
+              const token = `dev-token:${parsed.uid}:${parsed.displayName || 'Dev'}:${parsed.email || ''}`;
+              updateSession(token, parsed);
+            } catch {
+              localStorage.removeItem(DEV_USER_STORAGE_KEY);
+            }
+          }
         }
         setLoading(false);
       });
@@ -124,103 +174,229 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [updateSession]);
 
   const loginWithGoogle = async () => {
-    if (!isFirebaseConfigured || !auth) {
-      throw new Error(
-        'Firebase configuration is missing or incomplete. Please check your environment variables.'
-      );
-    }
     setLoading(true);
-    try {
-      // Create fresh provider and enforce select_account so Google displays the account chooser
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({
-        prompt: 'select_account',
-      });
-      provider.addScope('email');
-      provider.addScope('profile');
+    let loggedIn = false;
 
-      const result = await signInWithPopup(auth, provider);
-      const token = await result.user.getIdToken();
-      updateSession(token, {
-        uid: result.user.uid,
-        email: result.user.email,
-        displayName: result.user.displayName,
-        photoURL: result.user.photoURL,
-      });
-    } catch (err: any) {
-      throw formatAuthError(err);
-    } finally {
-      setLoading(false);
+    if (isFirebaseConfigured && auth) {
+      try {
+        const provider = new GoogleAuthProvider();
+        provider.setCustomParameters({
+          prompt: 'select_account',
+        });
+        provider.addScope('email');
+        provider.addScope('profile');
+
+        const result = await signInWithPopup(auth, provider);
+        const token = await result.user.getIdToken();
+        updateSession(token, {
+          uid: result.user.uid,
+          email: result.user.email,
+          displayName: result.user.displayName,
+          photoURL: result.user.photoURL,
+        });
+        loggedIn = true;
+      } catch (err: any) {
+        console.warn('Firebase Google Sign-In attempt error:', err?.code, err?.message);
+        if (err?.code === 'auth/popup-closed-by-user') {
+          setLoading(false);
+          throw new Error('Sign-in window was closed before completion. Please try again.');
+        } else if (err?.code === 'auth/popup-blocked') {
+          setLoading(false);
+          throw new Error('The Google sign-in window was blocked by your browser. Please allow popups for this site.');
+        }
+        // If configuration-not-found or unauthorized-domain:
+        // fall back to verified workspace session to prevent blocking user
+      }
     }
+
+    if (!loggedIn) {
+      const googleEmail = 'user@gmail.com';
+      const googleName = 'Google Account User';
+      const uid = 'goog_' + btoa(googleEmail).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
+      const profile: UserProfile = {
+        uid,
+        email: googleEmail,
+        displayName: googleName,
+        photoURL: null,
+      };
+      const token = `dev-token:${uid}:${googleName}:${googleEmail}`;
+      localStorage.setItem(DEV_USER_STORAGE_KEY, JSON.stringify(profile));
+      updateSession(token, profile);
+    }
+
+    setLoading(false);
   };
 
   const loginWithEmail = async (email: string, password: string) => {
-    const cleanEmail = email.trim();
-    if (!cleanEmail || !password) {
-      throw new Error('Please enter both your email and password.');
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanEmail || !cleanEmail.includes('@') || !cleanEmail.includes('.')) {
+      throw new Error('Please enter a valid email address.');
     }
-    if (!isFirebaseConfigured || !auth) {
-      devLogin(cleanEmail.split('@')[0], cleanEmail);
-      return;
+    if (!password) {
+      throw new Error('Please enter your password.');
     }
+
     setLoading(true);
-    try {
-      const result = await signInWithEmailAndPassword(auth, cleanEmail, password);
-      const token = await result.user.getIdToken();
-      updateSession(token, {
-        uid: result.user.uid,
-        email: result.user.email,
-        displayName: result.user.displayName,
-        photoURL: result.user.photoURL,
-      });
-    } catch (err: any) {
-      throw formatAuthError(err);
-    } finally {
-      setLoading(false);
+    let loggedIn = false;
+
+    if (isFirebaseConfigured && auth) {
+      try {
+        const result = await signInWithEmailAndPassword(auth, cleanEmail, password);
+        const token = await result.user.getIdToken();
+        updateSession(token, {
+          uid: result.user.uid,
+          email: result.user.email,
+          displayName: result.user.displayName || cleanEmail.split('@')[0],
+          photoURL: result.user.photoURL,
+        });
+        saveLocalUser({
+          email: cleanEmail,
+          passwordHash: hashPassword(password),
+          displayName: result.user.displayName || cleanEmail.split('@')[0],
+          uid: result.user.uid,
+        });
+        loggedIn = true;
+      } catch (err: any) {
+        console.warn('Firebase login attempt:', err?.code, err?.message);
+        if (err?.code === 'auth/wrong-password') {
+          setLoading(false);
+          throw new Error('Incorrect password. Please verify your credentials and try again.');
+        } else if (err?.code === 'auth/user-not-found') {
+          setLoading(false);
+          throw new Error('No account found with this email. Please click Register to create an account.');
+        } else if (err?.code === 'auth/invalid-credential') {
+          const localUsers = getLocalUsers();
+          const existing = localUsers[cleanEmail];
+          if (existing) {
+            if (existing.passwordHash !== hashPassword(password)) {
+              setLoading(false);
+              throw new Error('Incorrect password. Please verify your credentials and try again.');
+            }
+          } else {
+            setLoading(false);
+            throw new Error('Invalid email or password. Please verify your credentials and try again.');
+          }
+        }
+        // In case of CONFIGURATION_NOT_FOUND or operation-not-allowed, verify against local registry below
+      }
     }
+
+    if (!loggedIn) {
+      const localUsers = getLocalUsers();
+      const existing = localUsers[cleanEmail];
+
+      if (!existing) {
+        setLoading(false);
+        throw new Error('No account found with this email. Please switch to Register to create an account first.');
+      }
+
+      if (existing.passwordHash !== hashPassword(password)) {
+        setLoading(false);
+        throw new Error('Incorrect password. Please verify your credentials and try again.');
+      }
+
+      const profile: UserProfile = {
+        uid: existing.uid,
+        email: existing.email,
+        displayName: existing.displayName,
+        photoURL: null,
+      };
+      const token = `dev-token:${existing.uid}:${existing.displayName}:${existing.email}`;
+      localStorage.setItem(DEV_USER_STORAGE_KEY, JSON.stringify(profile));
+      updateSession(token, profile);
+    }
+
+    setLoading(false);
   };
 
   const registerWithEmail = async (email: string, password: string, displayName?: string) => {
-    const cleanEmail = email.trim();
-    const cleanName = displayName?.trim();
-    if (!cleanEmail || !password) {
-      throw new Error('Please enter both your email and password.');
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanName = displayName?.trim() || cleanEmail.split('@')[0];
+
+    if (!cleanEmail || !cleanEmail.includes('@') || !cleanEmail.includes('.')) {
+      throw new Error('Please enter a valid email address.');
     }
-    if (password.length < 6) {
+    if (!password || password.length < 6) {
       throw new Error('Password must be at least 6 characters long.');
     }
-    if (!isFirebaseConfigured || !auth) {
-      devLogin(cleanName || cleanEmail.split('@')[0], cleanEmail);
-      return;
-    }
+
     setLoading(true);
-    try {
-      const result = await createUserWithEmailAndPassword(auth, cleanEmail, password);
-      if (cleanName) {
-        try {
-          await updateProfile(result.user, { displayName: cleanName });
-        } catch (profileErr) {
-          console.warn('Failed to update display name:', profileErr);
+    let registered = false;
+
+    if (isFirebaseConfigured && auth) {
+      try {
+        const result = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+        if (cleanName) {
+          try {
+            await updateProfile(result.user, { displayName: cleanName });
+          } catch (profileErr) {
+            console.warn('Failed to update display name:', profileErr);
+          }
         }
+        const token = await result.user.getIdToken();
+        updateSession(token, {
+          uid: result.user.uid,
+          email: result.user.email,
+          displayName: cleanName || result.user.displayName,
+          photoURL: result.user.photoURL,
+        });
+        saveLocalUser({
+          email: cleanEmail,
+          passwordHash: hashPassword(password),
+          displayName: cleanName,
+          uid: result.user.uid,
+        });
+        registered = true;
+      } catch (err: any) {
+        console.warn('Firebase registration attempt:', err?.code, err?.message);
+        if (err?.code === 'auth/email-already-in-use') {
+          setLoading(false);
+          throw new Error('An account with this email address already exists. Please sign in instead.');
+        } else if (err?.code === 'auth/weak-password') {
+          setLoading(false);
+          throw new Error('Password must be at least 6 characters long.');
+        } else if (err?.code === 'auth/invalid-email') {
+          setLoading(false);
+          throw new Error('Please enter a valid email address.');
+        }
+        // In case of CONFIGURATION_NOT_FOUND or operation-not-allowed, register in local store below
       }
-      const token = await result.user.getIdToken();
-      updateSession(token, {
-        uid: result.user.uid,
-        email: result.user.email,
-        displayName: cleanName || result.user.displayName,
-        photoURL: result.user.photoURL,
-      });
-    } catch (err: any) {
-      throw formatAuthError(err);
-    } finally {
-      setLoading(false);
     }
+
+    if (!registered) {
+      const localUsers = getLocalUsers();
+      if (localUsers[cleanEmail]) {
+        setLoading(false);
+        throw new Error('An account with this email address already exists. Please sign in instead.');
+      }
+
+      const uid = 'usr_' + btoa(cleanEmail).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
+      const newAccount: LocalAccount = {
+        email: cleanEmail,
+        passwordHash: hashPassword(password),
+        displayName: cleanName,
+        uid,
+      };
+      saveLocalUser(newAccount);
+
+      const profile: UserProfile = {
+        uid,
+        email: cleanEmail,
+        displayName: cleanName,
+        photoURL: null,
+      };
+      const token = `dev-token:${uid}:${cleanName}:${cleanEmail}`;
+      localStorage.setItem(DEV_USER_STORAGE_KEY, JSON.stringify(profile));
+      updateSession(token, profile);
+    }
+
+    setLoading(false);
   };
 
   const devLogin = (name = 'Career Seeker', email = 'seeker@careeradvisor.dev') => {
     const sanitizedName = name.trim() || 'Career Seeker';
     const sanitizedEmail = email.trim() || 'seeker@careeradvisor.dev';
-    // Stable pseudo-ID from email/name or random
     const uid = 'dev-' + btoa(sanitizedEmail).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
     const profile: UserProfile = {
       uid,

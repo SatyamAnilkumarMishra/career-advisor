@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { Compass, AlertCircle, Mail, Lock, User, Eye, EyeOff } from 'lucide-react';
+import { Compass, AlertCircle, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 
 type AuthMode = 'signin' | 'register';
 
@@ -10,7 +10,6 @@ export const LoginScreen: React.FC = () => {
   const [mode, setMode] = useState<AuthMode>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [displayName, setDisplayName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
@@ -27,7 +26,7 @@ export const LoginScreen: React.FC = () => {
 
     const cleanEmail = email.trim();
     if (!cleanEmail) {
-      setError('Please enter your email or Gmail address.');
+      setError('Please enter your email.');
       return;
     }
     if (!password) {
@@ -44,8 +43,9 @@ export const LoginScreen: React.FC = () => {
       if (mode === 'signin') {
         await loginWithEmail(cleanEmail, password);
       } else {
-        await registerWithEmail(cleanEmail, password, displayName);
+        await registerWithEmail(cleanEmail, password);
       }
+      // On success, AuthProvider sets `user`, directing immediately to CareerAI frontpage
     } catch (err: any) {
       setError(err?.message || 'Authentication failed. Please check your credentials.');
     } finally {
@@ -58,6 +58,7 @@ export const LoginScreen: React.FC = () => {
     setIsSubmitting(true);
     try {
       await loginWithGoogle();
+      // On success, AuthProvider sets `user`, directing immediately to CareerAI frontpage
     } catch (err: any) {
       setError(err?.message || 'Unable to sign in with Google. Please try again.');
     } finally {
@@ -86,7 +87,7 @@ export const LoginScreen: React.FC = () => {
         <p className="auth-subheading">
           {mode === 'signin'
             ? 'Sign in to continue to your Career Advisor workspace.'
-            : 'Sign up to start your personalized Career Advisor journey.'}
+            : 'Register to access your personalized Career Advisor workspace.'}
         </p>
 
         {/* Mode Switcher Tabs */}
@@ -123,37 +124,16 @@ export const LoginScreen: React.FC = () => {
 
         {/* Email & Password Authentication Form */}
         <form onSubmit={handleFormSubmit} className="auth-form" noValidate>
-          {mode === 'register' && (
-            <div className="auth-field-group">
-              <label htmlFor="auth-name" className="auth-label">
-                Full Name (Optional)
-              </label>
-              <div className="auth-input-wrapper">
-                <User className="auth-input-icon" aria-hidden="true" />
-                <input
-                  id="auth-name"
-                  type="text"
-                  placeholder="e.g. Alex Morgan"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  disabled={isBusy}
-                  className="auth-input"
-                  autoComplete="name"
-                />
-              </div>
-            </div>
-          )}
-
           <div className="auth-field-group">
             <label htmlFor="auth-email" className="auth-label">
-              Email / Gmail Address
+              Email
             </label>
             <div className="auth-input-wrapper">
               <Mail className="auth-input-icon" aria-hidden="true" />
               <input
                 id="auth-email"
                 type="email"
-                placeholder="you@gmail.com"
+                placeholder="Enter your Email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 disabled={isBusy}
@@ -173,7 +153,7 @@ export const LoginScreen: React.FC = () => {
               <input
                 id="auth-password"
                 type={showPassword ? 'text' : 'password'}
-                placeholder="••••••••"
+                placeholder="Enter your Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={isBusy}
@@ -201,10 +181,10 @@ export const LoginScreen: React.FC = () => {
             {isBusy ? (
               <>
                 <span className="auth-submit-spinner" aria-hidden="true" />
-                <span>{mode === 'signin' ? 'Signing in...' : 'Creating account...'}</span>
+                <span>{mode === 'signin' ? 'Signing in...' : 'Registering...'}</span>
               </>
             ) : (
-              <span>{mode === 'signin' ? 'Sign In' : 'Create Account'}</span>
+              <span>{mode === 'signin' ? 'Sign In' : 'Register'}</span>
             )}
           </button>
         </form>
@@ -265,7 +245,7 @@ export const LoginScreen: React.FC = () => {
                 onClick={() => switchMode('register')}
                 disabled={isBusy}
               >
-                Create one
+                Register
               </button>
             </span>
           ) : (
