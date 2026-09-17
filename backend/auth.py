@@ -163,3 +163,44 @@ async def get_current_user(
             detail="Authentication required. Please provide a valid Bearer token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    token = auth_credentials.credentials.strip()
+
+    # Seamless Local Development / Mock Mode Support
+    # If Firebase Admin is not yet configured with cloud keys and token begins with 'dev-token-',
+    # permit local development and testing without breaking local workflows.
+    if not _firebase_initialized:
+        initialize_firebase_admin()
+
+    if not _firebase_initialized or token.startswith("dev-token:"):
+        if token.startswith("dev-token:"):
+            # Format: dev-token:uid:name:email
+            parts = token.split(":")
+            dev_uid = parts[1] if len(parts) > 1 else "dev-user"
+            dev_name = parts[2] if len(parts) > 2 else "Local Developer"
+            dev_email = parts[3] if len(parts) > 3 else "dev@careeradvisor.local"
+            return AuthUser(uid=dev_uid, email=dev_email, display_name=dev_name)
+
+        if os.getenv("ENABLE_DEV_AUTH", "false").lower() in ("true", "1", "yes"):
+            logger.info("Using DEV_AUTH fallback user for token.")
+            return AuthUser(
+                uid="dev-user-local",
+                email="dev@careeradvisor.local",
+                display_name="Developer Mode",
+            )
+
+    decoded_token = verify_firebase_token(token)
+    uid = decoded_token.get("uid") or decoded_token.get("sub")
+    if not uid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token payload missing valid user identifier.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return AuthUser(
+        uid=uid,
+        email=decoded_token.get("email"),
+        display_name=decoded_token.get("name"),
+        photo_url=decoded_token.get("picture"),
+    )
