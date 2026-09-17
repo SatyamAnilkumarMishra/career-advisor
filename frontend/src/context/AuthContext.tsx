@@ -82,7 +82,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loginWithGoogle = async () => {
     if (!isFirebaseConfigured || !auth || !googleProvider) {
       throw new Error(
-        'Firebase is not configured. Please set VITE_FIREBASE_API_KEY and VITE_FIREBASE_PROJECT_ID in .env, or use Dev Sign-In.'
+        'Firebase configuration is missing or incomplete. Please check your environment variables.'
       );
     }
     setLoading(true);
@@ -95,6 +95,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         displayName: result.user.displayName,
         photoURL: result.user.photoURL,
       });
+    } catch (err: any) {
+      console.error('Firebase Google Sign-In error:', err);
+      let userFriendlyMessage = 'Unable to sign in with Google. Please try again.';
+
+      if (err?.code === 'auth/popup-closed-by-user') {
+        userFriendlyMessage = 'Sign-in was cancelled before completion. Please try again.';
+      } else if (err?.code === 'auth/popup-blocked') {
+        userFriendlyMessage = 'The Google sign-in window was blocked by your browser. Please allow popups for this site.';
+      } else if (err?.code === 'auth/unauthorized-domain') {
+        const host = typeof window !== 'undefined' ? window.location.hostname : 'current domain';
+        userFriendlyMessage = `Domain "${host}" is not authorized in Firebase. Please add "${host}" under Firebase Console > Authentication > Settings > Authorized domains.`;
+      } else if (err?.code === 'auth/operation-not-allowed') {
+        userFriendlyMessage = 'Google Sign-In is disabled in the Firebase Console. Please enable Google in Firebase Authentication > Sign-in method.';
+      } else if (err?.code === 'auth/network-request-failed') {
+        userFriendlyMessage = 'Network connection failed. Please check your internet connection and try again.';
+      } else if (err?.code === 'auth/cancelled-popup-request') {
+        userFriendlyMessage = 'Another sign-in request is in progress. Please try again.';
+      } else if (err?.message) {
+        userFriendlyMessage = err.message.replace(/^Firebase:\s*/, '').replace(/\s*\(auth\/[^)]+\)\.?$/, '');
+      }
+
+      const enhancedError = new Error(userFriendlyMessage);
+      (enhancedError as any).code = err?.code;
+      throw enhancedError;
     } finally {
       setLoading(false);
     }
