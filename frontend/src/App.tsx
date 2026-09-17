@@ -39,14 +39,30 @@ import {
   AlertCircle,
 } from 'lucide-react';
 
-const HISTORY_CACHE_KEY = 'career_advisor_history';
+import { AuthProvider, useAuth } from '@/context/AuthContext';
+import { LoginScreen } from '@/components/LoginScreen';
 
-function cacheHistory(items: HistoryItem[]): void {
+function cacheUserHistory(items: HistoryItem[], uid?: string): void {
   try {
-    localStorage.setItem(HISTORY_CACHE_KEY, JSON.stringify(items));
+    const key = uid ? `career_advisor_history_${uid}` : 'career_advisor_history';
+    localStorage.setItem(key, JSON.stringify(items));
   } catch {
     // localStorage unavailable
   }
+}
+
+function getUserCachedHistory(uid?: string): HistoryItem[] {
+  try {
+    const key = uid ? `career_advisor_history_${uid}` : 'career_advisor_history';
+    const cached = localStorage.getItem(key);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {
+    // No cache
+  }
+  return [];
 }
 
 const MAX_PROFILE_CHARS = 4000;
@@ -68,7 +84,8 @@ function createOptimisticHistoryItem(query: string): HistoryItem {
   };
 }
 
-export default function Home() {
+function HomeContent() {
+  const { user, loading } = useAuth();
   // Navigation: 'chat' | 'resume' | 'skillgap' | 'roadmap' | 'matcher'
   const [activeView, setActiveView] = useState<'chat' | 'resume' | 'skillgap' | 'roadmap' | 'matcher'>('chat');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -136,6 +153,8 @@ export default function Home() {
 
   // Initial load
   useEffect(() => {
+    if (!user) return;
+
     fetchStatus()
       .then((data) => setStatus(data))
       .catch((err) => console.warn('Backend status check:', err));
@@ -144,21 +163,14 @@ export default function Home() {
       .then((items) => {
         if (items && Array.isArray(items)) {
           setSearchHistory(items);
-          cacheHistory(items);
+          cacheUserHistory(items, user.uid);
         }
       })
       .catch(() => {
-        try {
-          const cached = localStorage.getItem(HISTORY_CACHE_KEY);
-          if (cached) {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed)) setSearchHistory(parsed);
-          }
-        } catch {
-          // No cache
-        }
+        const cached = getUserCachedHistory(user.uid);
+        if (cached.length > 0) setSearchHistory(cached);
       });
-  }, []);
+  }, [user]);
 
   // Select Search History item
   const handleSelectHistory = (query: string) => {
@@ -173,7 +185,7 @@ export default function Home() {
 
     setSearchHistory((prev) => {
       const updated = prev.filter((item) => item.id !== id);
-      cacheHistory(updated);
+      cacheUserHistory(updated, user?.uid);
       return updated;
     });
 
@@ -264,7 +276,7 @@ export default function Home() {
     setSearchHistory((prev) => {
       const filtered = prev.filter((h) => h.query.toLowerCase() !== query.toLowerCase());
       const res = [optimisticItem, ...filtered];
-      cacheHistory(res);
+      cacheUserHistory(res, user?.uid);
       return res;
     });
 
@@ -275,7 +287,7 @@ export default function Home() {
             savedItem,
             ...prev.filter((h) => h.id !== optimisticItem.id && h.id !== savedItem.id && h.query.toLowerCase() !== query.toLowerCase()),
           ];
-          cacheHistory(res);
+          cacheUserHistory(res, user?.uid);
           return res;
         });
       })
@@ -431,6 +443,21 @@ export default function Home() {
   const toggleActionDone = (key: string) => {
     setCompletedActions((prev) => ({ ...prev, [key]: !prev[key] }));
   };
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: '100vh', backgroundColor: '#0B0B0A', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#D6A936' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+          <div style={{ width: '32px', height: '32px', border: '3px solid #D6A936', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+          <span style={{ fontSize: '13px', color: '#8E8C85' }}>Loading secure workspace...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginScreen />;
+  }
 
   return (
     <div className="app-viewport-container">
@@ -1211,3 +1238,12 @@ export default function Home() {
     </div>
   );
 }
+
+export default function Home() {
+  return (
+    <AuthProvider>
+      <HomeContent />
+    </AuthProvider>
+  );
+}
+
