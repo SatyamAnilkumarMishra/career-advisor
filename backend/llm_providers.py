@@ -180,6 +180,10 @@ class GeminiProvider(LLMProvider):
         self, api_key: str, model_name: str, *, timeout_seconds: int = 30, max_retries: int = 3
     ):
         try:
+            try:
+                import google.auth  # noqa: F401
+            except ImportError:
+                pass
             from google import genai
             from google.genai import types
         except ImportError as exc:  # pragma: no cover

@@ -26,9 +26,16 @@ class _FakeFinishReason:
         self.name = name
 
 
+_SAVED_MODULES = {}
+
+
 def _install_fake_genai(generate_content_impl):
     """Inject a fake `google.genai` module so GeminiProvider can be exercised
     without the real package or any network call."""
+    for mod in ("google", "google.genai", "google.genai.types"):
+        if mod not in _SAVED_MODULES:
+            _SAVED_MODULES[mod] = sys.modules.get(mod)
+
     fake_models = MagicMock()
     fake_models.generate_content.side_effect = generate_content_impl
 
@@ -45,7 +52,16 @@ def _install_fake_genai(generate_content_impl):
 
     fake_genai.types = fake_types
 
+    # Preserve any existing google submodules (like auth) on fake_google
     fake_google = types.ModuleType("google")
+    orig_google = _SAVED_MODULES.get("google")
+    if orig_google:
+        for attr in dir(orig_google):
+            if not attr.startswith("__"):
+                try:
+                    setattr(fake_google, attr, getattr(orig_google, attr))
+                except Exception:
+                    pass
     fake_google.genai = fake_genai
 
     sys.modules["google"] = fake_google
@@ -56,8 +72,11 @@ def _install_fake_genai(generate_content_impl):
 
 class TestGeminiProvider(unittest.TestCase):
     def tearDown(self):
-        for mod in ("google.genai.types", "google.genai", "google"):
-            sys.modules.pop(mod, None)
+        for mod, orig in _SAVED_MODULES.items():
+            if orig is None:
+                sys.modules.pop(mod, None)
+            else:
+                sys.modules[mod] = orig
 
     def _provider(self, **kwargs):
         kwargs.setdefault("api_key", "fake-key")

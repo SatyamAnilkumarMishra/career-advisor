@@ -169,6 +169,7 @@ def show_status() -> None:
         "langsmith",
         "mcp",
         "docx",
+        "firebase-admin",
     ]:
         module = {"google-genai": "google.genai", "python-dotenv": "dotenv"}.get(
             pkg, pkg.replace("-", "_")

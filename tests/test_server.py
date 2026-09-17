@@ -165,8 +165,8 @@ def _run_startup(*, existing_store, settings, doc_exists=True, build=None):
     with patch.object(server, "get_settings", return_value=settings), patch.object(
         server, "configure_logging"
     ), patch.object(server, "configure_langsmith"), patch.object(
-        server, "GeminiProvider"
-    ), patch.object(server, "RagService"), patch.object(
+        server, "create_llm_provider", return_value=MagicMock()
+    ), patch.object(server, "GeminiProvider"), patch.object(server, "RagService"), patch.object(
         server, "load_existing_vector_store", return_value=existing_store
     ), patch.object(
         server, "build_vector_store", build
