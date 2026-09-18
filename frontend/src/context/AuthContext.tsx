@@ -131,16 +131,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     if (isFirebaseConfigured && auth) {
-      // A signInWithRedirect() call earlier navigated the whole page away to
-      // Google and back — this resolves that pending result exactly once,
-      // on the page load that follows the redirect. Errors from it (e.g. the
-      // user closed/cancelled on Google's side) are surfaced here rather
-      // than silently dropped; a successful result is picked up by the
-      // onAuthStateChanged listener below, so there's no separate
-      // updateSession call needed for the success path.
-      getRedirectResult(auth).catch((err) => {
-        console.warn('Google redirect sign-in error:', err?.code, err?.message);
-      });
+
+      getRedirectResult(auth)
+        .then((result) => {
+          if (result?.user) {
+            console.info('Google redirect sign-in completed for', result.user.email);
+            result.user.getIdToken().then((token) => {
+              updateSession(token, {
+                uid: result.user.uid,
+                email: result.user.email,
+                displayName: result.user.displayName,
+                photoURL: result.user.photoURL,
+              });
+            });
+          } else {
+            console.info('No pending Google redirect result on this page load.');
+          }
+        })
+        .catch((err) => {
+          console.warn('Google redirect sign-in error:', err?.code, err?.message);
+        });
 
       const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
         if (firebaseUser) {
@@ -157,12 +167,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             updateSession(null, null);
           }
         } else {
-          // SECURITY: Firebase is configured, so it is the sole source of
-          // truth for the session — there must be no fallback to a locally
-          // stored dev-token here. Restoring one at this point is exactly
-          // how a stale or fabricated local session used to grant access
-          // even on a deployment with real Firebase auth. If any leftover
-          // local dev session exists, discard it rather than honor it.
+
           localStorage.removeItem(DEV_USER_STORAGE_KEY);
           updateSession(null, null);
         }
@@ -204,24 +209,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       provider.addScope('email');
       provider.addScope('profile');
 
-      // Popup sign-in (signInWithPopup) relies on a hidden same-site relay
-      // iframe hosted on the Firebase authDomain to hand the result back to
-      // this tab. Browsers with strict third-party storage partitioning
-      // (Firefox Enhanced Tracking Protection, Safari ITP) can silently
-      // break that relay: the account picker completes on Google's side,
-      // but the result never reaches this tab, landing the user back on
-      // the login screen with no visible error. Redirect sign-in avoids the
-      // iframe relay entirely — it's a full page navigation to Google and
-      // back — so it isn't affected by third-party storage restrictions.
       await signInWithRedirect(auth, provider);
-      // Execution pauses here: the browser navigates away to Google. On
-      // return, getRedirectResult() in the mount effect above resolves the
-      // result and onAuthStateChanged picks up the signed-in session.
+
     } catch (err: any) {
-      // SECURITY: any failure here — a real Firebase error, an unauthorized
-      // domain, a misconfigured provider, anything — must surface to the
-      // caller as a real error. There is no fallback account. Silently
-      // logging someone in after a failed sign-in is the bug this replaces.
       console.warn('Firebase Google Sign-In attempt error:', err?.code, err?.message);
       setLoading(false);
       throw formatAuthError(err);
@@ -241,11 +231,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(true);
 
     if (isFirebaseConfigured && auth) {
-      // Firebase is configured: it is the sole source of truth. Any error
-      // here — wrong password, unknown user, a real config problem — is
-      // surfaced as-is. It must never fall through to the unverified local
-      // account store, which would let a wrong password or a broken Firebase
-      // setup "succeed" against a same-named local record instead of failing.
       try {
         const result = await signInWithEmailAndPassword(auth, cleanEmail, password);
         const token = await result.user.getIdToken();
@@ -264,10 +249,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
-    // Firebase is not configured for this deployment at all: fall back to
-    // the local, browser-only account store. This path is only reachable
-    // when isFirebaseConfigured is false, so it can never be used to bypass
-    // a real, properly configured Firebase project.
     const localUsers = getLocalUsers();
     const existing = localUsers[cleanEmail];
 
@@ -307,10 +288,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(true);
 
     if (isFirebaseConfigured && auth) {
-      // Same rule as sign-in: once Firebase is configured, it is the only
-      // path. A registration failure (email already in use, weak password,
-      // a genuine config problem) must be reported, never quietly absorbed
-      // into a separate local-only account.
+
       try {
         const result = await createUserWithEmailAndPassword(auth, cleanEmail, password);
         if (cleanName) {
@@ -320,14 +298,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             console.warn('Failed to update display name:', profileErr);
           }
         }
-        // Registration itself is already real (Firebase's own servers create
-        // the account and enforce the password rules) but nothing so far
-        // confirms this email address actually belongs to the person typing
-        // it. sendEmailVerification triggers Firebase to send a real email
-        // with a confirmation link to that inbox — this is the check that
-        // was missing. Access to the app isn't gated on clicking it (that
-        // would be a bigger UX change than asked for), so this is
-        // best-effort: a failure here shouldn't block registration.
+
         try {
           await sendEmailVerification(result.user);
           sessionStorage.setItem(JUST_REGISTERED_STORAGE_KEY, cleanEmail);
@@ -350,8 +321,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
-    // Firebase is not configured for this deployment at all: register into
-    // the local, browser-only account store instead.
     const localUsers = getLocalUsers();
     if (localUsers[cleanEmail]) {
       setLoading(false);
@@ -379,11 +348,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(false);
   };
 
-  // Explicit, opt-in local developer session — never called automatically
-  // by any login/register/error path above. Kept for local development
-  // without a Firebase project. Refuses to run once Firebase IS configured,
-  // so it can never be wired up (even by accident, e.g. a stray button) to
-  // bypass a real deployment's authentication.
   const devLogin = (name = 'Career Seeker', email = 'seeker@careeradvisor.dev') => {
     if (isFirebaseConfigured) {
       console.error('devLogin() is disabled: Firebase is configured for this deployment.');
