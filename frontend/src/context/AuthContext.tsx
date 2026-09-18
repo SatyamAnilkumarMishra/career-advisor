@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import {
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   updateProfile,
@@ -129,6 +131,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     if (isFirebaseConfigured && auth) {
+      // A signInWithRedirect() call earlier navigated the whole page away to
+      // Google and back — this resolves that pending result exactly once,
+      // on the page load that follows the redirect. Errors from it (e.g. the
+      // user closed/cancelled on Google's side) are surfaced here rather
+      // than silently dropped; a successful result is picked up by the
+      // onAuthStateChanged listener below, so there's no separate
+      // updateSession call needed for the success path.
+      getRedirectResult(auth).catch((err) => {
+        console.warn('Google redirect sign-in error:', err?.code, err?.message);
+      });
+
       const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
         if (firebaseUser) {
           try {
@@ -191,23 +204,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       provider.addScope('email');
       provider.addScope('profile');
 
-      const result = await signInWithPopup(auth, provider);
-      const token = await result.user.getIdToken();
-      updateSession(token, {
-        uid: result.user.uid,
-        email: result.user.email,
-        displayName: result.user.displayName,
-        photoURL: result.user.photoURL,
-      });
+      // Popup sign-in (signInWithPopup) relies on a hidden same-site relay
+      // iframe hosted on the Firebase authDomain to hand the result back to
+      // this tab. Browsers with strict third-party storage partitioning
+      // (Firefox Enhanced Tracking Protection, Safari ITP) can silently
+      // break that relay: the account picker completes on Google's side,
+      // but the result never reaches this tab, landing the user back on
+      // the login screen with no visible error. Redirect sign-in avoids the
+      // iframe relay entirely — it's a full page navigation to Google and
+      // back — so it isn't affected by third-party storage restrictions.
+      await signInWithRedirect(auth, provider);
+      // Execution pauses here: the browser navigates away to Google. On
+      // return, getRedirectResult() in the mount effect above resolves the
+      // result and onAuthStateChanged picks up the signed-in session.
     } catch (err: any) {
       // SECURITY: any failure here — a real Firebase error, an unauthorized
       // domain, a misconfigured provider, anything — must surface to the
       // caller as a real error. There is no fallback account. Silently
       // logging someone in after a failed sign-in is the bug this replaces.
       console.warn('Firebase Google Sign-In attempt error:', err?.code, err?.message);
-      throw formatAuthError(err);
-    } finally {
       setLoading(false);
+      throw formatAuthError(err);
     }
   };
 
