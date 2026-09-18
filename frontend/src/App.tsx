@@ -42,18 +42,26 @@ import {
 import { AuthProvider, useAuth, JUST_REGISTERED_STORAGE_KEY } from '@/context/AuthContext';
 import { LoginScreen } from '@/components/LoginScreen';
 
-function cacheUserHistory(items: HistoryItem[], uid?: string): void {
+function getUserHistoryKey(userEmailOrUid?: string | null): string | null {
+  if (!userEmailOrUid) return null;
+  const clean = userEmailOrUid.toLowerCase().trim();
+  return `career_advisor_history_${clean}`;
+}
+
+function cacheUserHistory(items: HistoryItem[], userEmailOrUid?: string | null): void {
   try {
-    const key = uid ? `career_advisor_history_${uid}` : 'career_advisor_history';
+    const key = getUserHistoryKey(userEmailOrUid);
+    if (!key) return;
     localStorage.setItem(key, JSON.stringify(items));
   } catch {
     // localStorage unavailable
   }
 }
 
-function getUserCachedHistory(uid?: string): HistoryItem[] {
+function getUserCachedHistory(userEmailOrUid?: string | null): HistoryItem[] {
   try {
-    const key = uid ? `career_advisor_history_${uid}` : 'career_advisor_history';
+    const key = getUserHistoryKey(userEmailOrUid);
+    if (!key) return [];
     const cached = localStorage.getItem(key);
     if (cached) {
       const parsed = JSON.parse(cached);
@@ -164,9 +172,19 @@ function HomeContent() {
   const [isJobSearching, setIsJobSearching] = useState(false);
   const [jobError, setJobError] = useState<string | null>(null);
 
-  // Initial load
+  // Initial load: strictly isolate and load history for the active email
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setSearchHistory([]);
+      setMessages([]);
+      return;
+    }
+
+    const currentEmail = user.email?.toLowerCase().trim() || user.uid;
+
+    // Immediately restore history saved specifically for this email
+    const cached = getUserCachedHistory(currentEmail);
+    setSearchHistory(cached);
 
     fetchStatus()
       .then((data) => setStatus(data))
@@ -176,12 +194,11 @@ function HomeContent() {
       .then((items) => {
         if (items && Array.isArray(items)) {
           setSearchHistory(items);
-          cacheUserHistory(items, user.uid);
+          cacheUserHistory(items, currentEmail);
         }
       })
       .catch(() => {
-        const cached = getUserCachedHistory(user.uid);
-        if (cached.length > 0) setSearchHistory(cached);
+        // Cached history is already set
       });
   }, [user]);
 
@@ -195,10 +212,11 @@ function HomeContent() {
   // Delete Search History item and clear active chat
   const handleDeleteHistory = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
+    const currentEmail = user?.email?.toLowerCase().trim() || user?.uid;
 
     setSearchHistory((prev) => {
       const updated = prev.filter((item) => item.id !== id);
-      cacheUserHistory(updated, user?.uid);
+      cacheUserHistory(updated, currentEmail);
       return updated;
     });
 
@@ -285,11 +303,12 @@ function HomeContent() {
     setIsThinking(true);
     setAgentStatusText('Thinking...');
 
+    const currentEmail = user?.email?.toLowerCase().trim() || user?.uid;
     const optimisticItem = createOptimisticHistoryItem(query);
     setSearchHistory((prev) => {
       const filtered = prev.filter((h) => h.query.toLowerCase() !== query.toLowerCase());
       const res = [optimisticItem, ...filtered];
-      cacheUserHistory(res, user?.uid);
+      cacheUserHistory(res, currentEmail);
       return res;
     });
 
@@ -300,7 +319,7 @@ function HomeContent() {
             savedItem,
             ...prev.filter((h) => h.id !== optimisticItem.id && h.id !== savedItem.id && h.query.toLowerCase() !== query.toLowerCase()),
           ];
-          cacheUserHistory(res, user?.uid);
+          cacheUserHistory(res, currentEmail);
           return res;
         });
       })
