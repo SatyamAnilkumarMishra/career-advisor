@@ -4,6 +4,7 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   updateProfile,
+  sendEmailVerification,
   signOut,
   onAuthStateChanged,
   GoogleAuthProvider,
@@ -35,6 +36,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const DEV_USER_STORAGE_KEY = 'career_advisor_dev_user';
 const USERS_STORAGE_KEY = 'career_advisor_registered_users';
+export const JUST_REGISTERED_STORAGE_KEY = 'career_advisor_just_registered_email';
 
 function hashPassword(pwd: string): string {
   let h1 = 0xdeadbeef ^ 12345;
@@ -142,17 +144,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             updateSession(null, null);
           }
         } else {
-          // Check if user was logged in via local session
-          const stored = localStorage.getItem(DEV_USER_STORAGE_KEY);
-          if (stored) {
-            try {
-              const parsed = JSON.parse(stored) as UserProfile;
-              const token = `dev-token:${parsed.uid}:${parsed.displayName || 'Dev'}:${parsed.email || ''}`;
-              updateSession(token, parsed);
-            } catch {
-              localStorage.removeItem(DEV_USER_STORAGE_KEY);
-            }
-          }
+          // SECURITY: Firebase is configured, so it is the sole source of
+          // truth for the session — there must be no fallback to a locally
+          // stored dev-token here. Restoring one at this point is exactly
+          // how a stale or fabricated local session used to grant access
+          // even on a deployment with real Firebase auth. If any leftover
+          // local dev session exists, discard it rather than honor it.
+          localStorage.removeItem(DEV_USER_STORAGE_KEY);
+          updateSession(null, null);
         }
         setLoading(false);
       });
@@ -175,56 +174,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loginWithGoogle = async () => {
     setLoading(true);
-    let loggedIn = false;
 
-    if (isFirebaseConfigured && auth) {
-      try {
-        const provider = new GoogleAuthProvider();
-        provider.setCustomParameters({
-          prompt: 'select_account',
-        });
-        provider.addScope('email');
-        provider.addScope('profile');
-
-        const result = await signInWithPopup(auth, provider);
-        const token = await result.user.getIdToken();
-        updateSession(token, {
-          uid: result.user.uid,
-          email: result.user.email,
-          displayName: result.user.displayName,
-          photoURL: result.user.photoURL,
-        });
-        loggedIn = true;
-      } catch (err: any) {
-        console.warn('Firebase Google Sign-In attempt error:', err?.code, err?.message);
-        if (err?.code === 'auth/popup-closed-by-user') {
-          setLoading(false);
-          throw new Error('Sign-in window was closed before completion. Please try again.');
-        } else if (err?.code === 'auth/popup-blocked') {
-          setLoading(false);
-          throw new Error('The Google sign-in window was blocked by your browser. Please allow popups for this site.');
-        }
-        // If configuration-not-found or unauthorized-domain:
-        // fall back to verified workspace session to prevent blocking user
-      }
+    if (!isFirebaseConfigured || !auth) {
+      setLoading(false);
+      throw new Error(
+        'Google sign-in is not available because Firebase is not configured for this deployment. ' +
+          'Set VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, and VITE_FIREBASE_PROJECT_ID (see frontend/.env.example), then restart the app.'
+      );
     }
 
-    if (!loggedIn) {
-      const googleEmail = 'user@gmail.com';
-      const googleName = 'Google Account User';
-      const uid = 'goog_' + btoa(googleEmail).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
-      const profile: UserProfile = {
-        uid,
-        email: googleEmail,
-        displayName: googleName,
-        photoURL: null,
-      };
-      const token = `dev-token:${uid}:${googleName}:${googleEmail}`;
-      localStorage.setItem(DEV_USER_STORAGE_KEY, JSON.stringify(profile));
-      updateSession(token, profile);
-    }
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({
+        prompt: 'select_account',
+      });
+      provider.addScope('email');
+      provider.addScope('profile');
 
-    setLoading(false);
+      const result = await signInWithPopup(auth, provider);
+      const token = await result.user.getIdToken();
+      updateSession(token, {
+        uid: result.user.uid,
+        email: result.user.email,
+        displayName: result.user.displayName,
+        photoURL: result.user.photoURL,
+      });
+    } catch (err: any) {
+      // SECURITY: any failure here — a real Firebase error, an unauthorized
+      // domain, a misconfigured provider, anything — must surface to the
+      // caller as a real error. There is no fallback account. Silently
+      // logging someone in after a failed sign-in is the bug this replaces.
+      console.warn('Firebase Google Sign-In attempt error:', err?.code, err?.message);
+      throw formatAuthError(err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const loginWithEmail = async (email: string, password: string) => {
@@ -238,9 +222,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     setLoading(true);
-    let loggedIn = false;
 
     if (isFirebaseConfigured && auth) {
+      // Firebase is configured: it is the sole source of truth. Any error
+      // here — wrong password, unknown user, a real config problem — is
+      // surfaced as-is. It must never fall through to the unverified local
+      // account store, which would let a wrong password or a broken Firebase
+      // setup "succeed" against a same-named local record instead of failing.
       try {
         const result = await signInWithEmailAndPassword(auth, cleanEmail, password);
         const token = await result.user.getIdToken();
@@ -250,63 +238,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           displayName: result.user.displayName || cleanEmail.split('@')[0],
           photoURL: result.user.photoURL,
         });
-        saveLocalUser({
-          email: cleanEmail,
-          passwordHash: hashPassword(password),
-          displayName: result.user.displayName || cleanEmail.split('@')[0],
-          uid: result.user.uid,
-        });
-        loggedIn = true;
       } catch (err: any) {
         console.warn('Firebase login attempt:', err?.code, err?.message);
-        if (err?.code === 'auth/wrong-password') {
-          setLoading(false);
-          throw new Error('Incorrect password. Please verify your credentials and try again.');
-        } else if (err?.code === 'auth/user-not-found') {
-          setLoading(false);
-          throw new Error('No account found with this email. Please click Register to create an account.');
-        } else if (err?.code === 'auth/invalid-credential') {
-          const localUsers = getLocalUsers();
-          const existing = localUsers[cleanEmail];
-          if (existing) {
-            if (existing.passwordHash !== hashPassword(password)) {
-              setLoading(false);
-              throw new Error('Incorrect password. Please verify your credentials and try again.');
-            }
-          } else {
-            setLoading(false);
-            throw new Error('Invalid email or password. Please verify your credentials and try again.');
-          }
-        }
-        // In case of CONFIGURATION_NOT_FOUND or operation-not-allowed, verify against local registry below
+        throw formatAuthError(err);
+      } finally {
+        setLoading(false);
       }
+      return;
     }
 
-    if (!loggedIn) {
-      const localUsers = getLocalUsers();
-      const existing = localUsers[cleanEmail];
+    // Firebase is not configured for this deployment at all: fall back to
+    // the local, browser-only account store. This path is only reachable
+    // when isFirebaseConfigured is false, so it can never be used to bypass
+    // a real, properly configured Firebase project.
+    const localUsers = getLocalUsers();
+    const existing = localUsers[cleanEmail];
 
-      if (!existing) {
-        setLoading(false);
-        throw new Error('No account found with this email. Please switch to Register to create an account first.');
-      }
-
-      if (existing.passwordHash !== hashPassword(password)) {
-        setLoading(false);
-        throw new Error('Incorrect password. Please verify your credentials and try again.');
-      }
-
-      const profile: UserProfile = {
-        uid: existing.uid,
-        email: existing.email,
-        displayName: existing.displayName,
-        photoURL: null,
-      };
-      const token = `dev-token:${existing.uid}:${existing.displayName}:${existing.email}`;
-      localStorage.setItem(DEV_USER_STORAGE_KEY, JSON.stringify(profile));
-      updateSession(token, profile);
+    if (!existing) {
+      setLoading(false);
+      throw new Error('No account found with this email. Please switch to Register to create an account first.');
     }
 
+    if (existing.passwordHash !== hashPassword(password)) {
+      setLoading(false);
+      throw new Error('Incorrect password. Please verify your credentials and try again.');
+    }
+
+    const profile: UserProfile = {
+      uid: existing.uid,
+      email: existing.email,
+      displayName: existing.displayName,
+      photoURL: null,
+    };
+    const token = `dev-token:${existing.uid}:${existing.displayName}:${existing.email}`;
+    localStorage.setItem(DEV_USER_STORAGE_KEY, JSON.stringify(profile));
+    updateSession(token, profile);
     setLoading(false);
   };
 
@@ -322,9 +288,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     setLoading(true);
-    let registered = false;
 
     if (isFirebaseConfigured && auth) {
+      // Same rule as sign-in: once Firebase is configured, it is the only
+      // path. A registration failure (email already in use, weak password,
+      // a genuine config problem) must be reported, never quietly absorbed
+      // into a separate local-only account.
       try {
         const result = await createUserWithEmailAndPassword(auth, cleanEmail, password);
         if (cleanName) {
@@ -334,6 +303,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             console.warn('Failed to update display name:', profileErr);
           }
         }
+        // Registration itself is already real (Firebase's own servers create
+        // the account and enforce the password rules) but nothing so far
+        // confirms this email address actually belongs to the person typing
+        // it. sendEmailVerification triggers Firebase to send a real email
+        // with a confirmation link to that inbox — this is the check that
+        // was missing. Access to the app isn't gated on clicking it (that
+        // would be a bigger UX change than asked for), so this is
+        // best-effort: a failure here shouldn't block registration.
+        try {
+          await sendEmailVerification(result.user);
+          sessionStorage.setItem(JUST_REGISTERED_STORAGE_KEY, cleanEmail);
+        } catch (verifyErr) {
+          console.warn('Failed to send verification email:', verifyErr);
+        }
         const token = await result.user.getIdToken();
         updateSession(token, {
           uid: result.user.uid,
@@ -341,60 +324,54 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           displayName: cleanName || result.user.displayName,
           photoURL: result.user.photoURL,
         });
-        saveLocalUser({
-          email: cleanEmail,
-          passwordHash: hashPassword(password),
-          displayName: cleanName,
-          uid: result.user.uid,
-        });
-        registered = true;
       } catch (err: any) {
         console.warn('Firebase registration attempt:', err?.code, err?.message);
-        if (err?.code === 'auth/email-already-in-use') {
-          setLoading(false);
-          throw new Error('An account with this email address already exists. Please sign in instead.');
-        } else if (err?.code === 'auth/weak-password') {
-          setLoading(false);
-          throw new Error('Password must be at least 6 characters long.');
-        } else if (err?.code === 'auth/invalid-email') {
-          setLoading(false);
-          throw new Error('Please enter a valid email address.');
-        }
-        // In case of CONFIGURATION_NOT_FOUND or operation-not-allowed, register in local store below
-      }
-    }
-
-    if (!registered) {
-      const localUsers = getLocalUsers();
-      if (localUsers[cleanEmail]) {
+        throw formatAuthError(err);
+      } finally {
         setLoading(false);
-        throw new Error('An account with this email address already exists. Please sign in instead.');
       }
-
-      const uid = 'usr_' + btoa(cleanEmail).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
-      const newAccount: LocalAccount = {
-        email: cleanEmail,
-        passwordHash: hashPassword(password),
-        displayName: cleanName,
-        uid,
-      };
-      saveLocalUser(newAccount);
-
-      const profile: UserProfile = {
-        uid,
-        email: cleanEmail,
-        displayName: cleanName,
-        photoURL: null,
-      };
-      const token = `dev-token:${uid}:${cleanName}:${cleanEmail}`;
-      localStorage.setItem(DEV_USER_STORAGE_KEY, JSON.stringify(profile));
-      updateSession(token, profile);
+      return;
     }
 
+    // Firebase is not configured for this deployment at all: register into
+    // the local, browser-only account store instead.
+    const localUsers = getLocalUsers();
+    if (localUsers[cleanEmail]) {
+      setLoading(false);
+      throw new Error('An account with this email address already exists. Please sign in instead.');
+    }
+
+    const uid = 'usr_' + btoa(cleanEmail).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
+    const newAccount: LocalAccount = {
+      email: cleanEmail,
+      passwordHash: hashPassword(password),
+      displayName: cleanName,
+      uid,
+    };
+    saveLocalUser(newAccount);
+
+    const profile: UserProfile = {
+      uid,
+      email: cleanEmail,
+      displayName: cleanName,
+      photoURL: null,
+    };
+    const token = `dev-token:${uid}:${cleanName}:${cleanEmail}`;
+    localStorage.setItem(DEV_USER_STORAGE_KEY, JSON.stringify(profile));
+    updateSession(token, profile);
     setLoading(false);
   };
 
+  // Explicit, opt-in local developer session — never called automatically
+  // by any login/register/error path above. Kept for local development
+  // without a Firebase project. Refuses to run once Firebase IS configured,
+  // so it can never be wired up (even by accident, e.g. a stray button) to
+  // bypass a real deployment's authentication.
   const devLogin = (name = 'Career Seeker', email = 'seeker@careeradvisor.dev') => {
+    if (isFirebaseConfigured) {
+      console.error('devLogin() is disabled: Firebase is configured for this deployment.');
+      return;
+    }
     const sanitizedName = name.trim() || 'Career Seeker';
     const sanitizedEmail = email.trim() || 'seeker@careeradvisor.dev';
     const uid = 'dev-' + btoa(sanitizedEmail).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
