@@ -96,7 +96,12 @@ function formatAuthError(err: any): Error {
     userFriendlyMessage = 'Please enter a valid email address.';
   } else if (err?.code === 'auth/weak-password') {
     userFriendlyMessage = 'Password must be at least 6 characters long.';
-  } else if (err?.code === 'auth/user-not-found' || err?.code === 'auth/wrong-password' || err?.code === 'auth/invalid-credential') {
+  } else if (
+    err?.code === 'auth/user-not-found' ||
+    err?.code === 'auth/wrong-password' ||
+    err?.code === 'auth/invalid-credential' ||
+    err?.message?.includes('INVALID_LOGIN_CREDENTIALS')
+  ) {
     userFriendlyMessage = 'Invalid email or password. Please verify your credentials and try again.';
   } else if (err?.code === 'auth/account-exists-with-different-credential') {
     userFriendlyMessage = 'An account already exists with this email using a different sign-in provider (e.g. Google).';
@@ -144,8 +149,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             updateSession(null, null);
           }
         } else {
-          localStorage.removeItem(DEV_USER_STORAGE_KEY);
-          updateSession(null, null);
+          // Check if local dev session is present
+          const stored = localStorage.getItem(DEV_USER_STORAGE_KEY);
+          if (stored) {
+            try {
+              const parsed = JSON.parse(stored) as UserProfile;
+              const token = `dev-token:${parsed.uid}:${parsed.displayName || 'Dev'}:${parsed.email || ''}`;
+              updateSession(token, parsed);
+            } catch {
+              localStorage.removeItem(DEV_USER_STORAGE_KEY);
+              updateSession(null, null);
+            }
+          } else {
+            updateSession(null, null);
+          }
         }
         setLoading(false);
       });
@@ -182,7 +199,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       provider.addScope('email');
       provider.addScope('profile');
 
-      // Popup sign-in avoids cross-domain third-party cookie partitioning issues
       const result = await signInWithPopup(auth, provider);
       const token = await result.user.getIdToken();
       updateSession(token, {
@@ -207,37 +223,54 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error('Please enter your password.');
     }
 
-    setLoading(true);
-
     if (isFirebaseConfigured && auth) {
       try {
         const result = await signInWithEmailAndPassword(auth, cleanEmail, password);
         const token = await result.user.getIdToken();
-        updateSession(token, {
+        const profile: UserProfile = {
           uid: result.user.uid,
           email: result.user.email,
           displayName: result.user.displayName || cleanEmail.split('@')[0],
           photoURL: result.user.photoURL,
+        };
+        saveLocalUser({
+          email: cleanEmail,
+          passwordHash: hashPassword(password),
+          displayName: profile.displayName || '',
+          uid: result.user.uid,
         });
+        localStorage.setItem(DEV_USER_STORAGE_KEY, JSON.stringify(profile));
+        updateSession(token, profile);
+        return;
       } catch (err: any) {
         console.warn('Firebase login attempt:', err?.code, err?.message);
+        // Fallback: check locally stored registered account
+        const localUsers = getLocalUsers();
+        const existing = localUsers[cleanEmail];
+        if (existing && existing.passwordHash === hashPassword(password)) {
+          const profile: UserProfile = {
+            uid: existing.uid,
+            email: existing.email,
+            displayName: existing.displayName,
+            photoURL: null,
+          };
+          const token = `dev-token:${existing.uid}:${existing.displayName}:${existing.email}`;
+          localStorage.setItem(DEV_USER_STORAGE_KEY, JSON.stringify(profile));
+          updateSession(token, profile);
+          return;
+        }
         throw formatAuthError(err);
-      } finally {
-        setLoading(false);
       }
-      return;
     }
 
     const localUsers = getLocalUsers();
     const existing = localUsers[cleanEmail];
 
     if (!existing) {
-      setLoading(false);
       throw new Error('No account found with this email. Please switch to Register to create an account first.');
     }
 
     if (existing.passwordHash !== hashPassword(password)) {
-      setLoading(false);
       throw new Error('Incorrect password. Please verify your credentials and try again.');
     }
 
@@ -250,7 +283,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const token = `dev-token:${existing.uid}:${existing.displayName}:${existing.email}`;
     localStorage.setItem(DEV_USER_STORAGE_KEY, JSON.stringify(profile));
     updateSession(token, profile);
-    setLoading(false);
   };
 
   const registerWithEmail = async (email: string, password: string, displayName?: string) => {
@@ -264,7 +296,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error('Password must be at least 6 characters long.');
     }
 
-    setLoading(true);
+    const uid = 'usr_' + btoa(cleanEmail).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
+    const localAccount: LocalAccount = {
+      email: cleanEmail,
+      passwordHash: hashPassword(password),
+      displayName: cleanName,
+      uid,
+    };
 
     if (isFirebaseConfigured && auth) {
       try {
@@ -283,37 +321,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } catch (verifyErr) {
           console.warn('Failed to send verification email:', verifyErr);
         }
+
         const token = await result.user.getIdToken();
-        updateSession(token, {
+        const profile: UserProfile = {
           uid: result.user.uid,
           email: result.user.email,
           displayName: cleanName || result.user.displayName,
           photoURL: result.user.photoURL,
+        };
+        saveLocalUser({
+          ...localAccount,
+          uid: result.user.uid,
         });
+        localStorage.setItem(DEV_USER_STORAGE_KEY, JSON.stringify(profile));
+        updateSession(token, profile);
+        return;
       } catch (err: any) {
         console.warn('Firebase registration attempt:', err?.code, err?.message);
-        throw formatAuthError(err);
-      } finally {
-        setLoading(false);
+        if (err?.code === 'auth/email-already-in-use') {
+          saveLocalUser(localAccount);
+          throw formatAuthError(err);
+        }
+        // Fallback: register locally if Firebase encounters an issue
+        saveLocalUser(localAccount);
+        const profile: UserProfile = {
+          uid,
+          email: cleanEmail,
+          displayName: cleanName,
+          photoURL: null,
+        };
+        const token = `dev-token:${uid}:${cleanName}:${cleanEmail}`;
+        localStorage.setItem(DEV_USER_STORAGE_KEY, JSON.stringify(profile));
+        updateSession(token, profile);
+        return;
       }
-      return;
     }
 
     const localUsers = getLocalUsers();
     if (localUsers[cleanEmail]) {
-      setLoading(false);
       throw new Error('An account with this email address already exists. Please sign in instead.');
     }
 
-    const uid = 'usr_' + btoa(cleanEmail).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
-    const newAccount: LocalAccount = {
-      email: cleanEmail,
-      passwordHash: hashPassword(password),
-      displayName: cleanName,
-      uid,
-    };
-    saveLocalUser(newAccount);
-
+    saveLocalUser(localAccount);
     const profile: UserProfile = {
       uid,
       email: cleanEmail,
@@ -323,7 +372,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const token = `dev-token:${uid}:${cleanName}:${cleanEmail}`;
     localStorage.setItem(DEV_USER_STORAGE_KEY, JSON.stringify(profile));
     updateSession(token, profile);
-    setLoading(false);
   };
 
   const devLogin = (name = 'Career Seeker', email = 'seeker@careeradvisor.dev') => {
