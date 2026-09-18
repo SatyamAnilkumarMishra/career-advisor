@@ -39,7 +39,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 
-import { AuthProvider, useAuth } from '@/context/AuthContext';
+import { AuthProvider, useAuth, JUST_REGISTERED_STORAGE_KEY } from '@/context/AuthContext';
 import { LoginScreen } from '@/components/LoginScreen';
 
 function cacheUserHistory(items: HistoryItem[], uid?: string): void {
@@ -105,6 +105,19 @@ function HomeContent() {
       setToastMessage((current) => (current === msg ? null : current));
     }, 2400);
   };
+
+  // Right after a fresh registration lands here, confirm the verification
+  // email was actually sent, so it's visible that something real happened
+  // rather than a silent instant login.
+  useEffect(() => {
+    if (!user) return;
+    const justRegisteredEmail = sessionStorage.getItem(JUST_REGISTERED_STORAGE_KEY);
+    if (justRegisteredEmail) {
+      sessionStorage.removeItem(JUST_REGISTERED_STORAGE_KEY);
+      showToast(`Verification email sent to ${justRegisteredEmail}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   // Resume state
   const [resumeFilename, setResumeFilename] = useState<string | null>(null);
@@ -1246,4 +1259,3 @@ export default function Home() {
     </AuthProvider>
   );
 }
-

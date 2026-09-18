@@ -153,7 +153,7 @@ async def get_current_user(
     auth_credentials: HTTPAuthorizationCredentials | None = Security(security),
 ) -> AuthUser:
     """FastAPI dependency to authenticate requests and return the current user.
-    
+
     Extracts Bearer token from HTTP Authorization header, verifies it with
     Firebase Admin SDK, and returns the authoritative AuthUser with verified UID.
     """
@@ -166,29 +166,50 @@ async def get_current_user(
 
     token = auth_credentials.credentials.strip()
 
-    # Seamless Local Development / Mock Mode Support
-    # If Firebase Admin is not yet configured with cloud keys and token begins with 'dev-token-',
-    # permit local development and testing without breaking local workflows.
     if not _firebase_initialized:
         initialize_firebase_admin()
 
-    if not _firebase_initialized or token.startswith("dev-token:"):
-        if token.startswith("dev-token:"):
+    # SECURITY: the dev-token path must NEVER be reachable when Firebase Admin
+    # is actually configured. It is an unsigned, client-fabricated string
+    # (`dev-token:<uid>:<name>:<email>`) that anyone can type by hand — it is
+    # not a credential, it is a claim. Trusting it whenever it merely showed
+    # up, regardless of server configuration, is what let any request bypass
+    # authentication entirely. It is now accepted only when both of the
+    # following hold: Firebase Admin could not be initialized on this server
+    # AND the operator has explicitly opted in with ENABLE_DEV_AUTH=true.
+    if not _firebase_initialized:
+        dev_auth_enabled = os.getenv("ENABLE_DEV_AUTH", "false").lower() in ("true", "1", "yes")
+
+        if dev_auth_enabled and token.startswith("dev-token:"):
             # Format: dev-token:uid:name:email
             parts = token.split(":")
             dev_uid = parts[1] if len(parts) > 1 else "dev-user"
             dev_name = parts[2] if len(parts) > 2 else "Local Developer"
             dev_email = parts[3] if len(parts) > 3 else "dev@careeradvisor.local"
+            logger.warning(
+                "ENABLE_DEV_AUTH is on — accepting an UNVERIFIED dev-token for uid=%s. "
+                "This must never be enabled in a production environment.",
+                dev_uid,
+            )
             return AuthUser(uid=dev_uid, email=dev_email, display_name=dev_name)
 
-        if os.getenv("ENABLE_DEV_AUTH", "false").lower() in ("true", "1", "yes"):
-            logger.info("Using DEV_AUTH fallback user for token.")
+        if dev_auth_enabled:
+            logger.warning("ENABLE_DEV_AUTH is on — accepting UNVERIFIED dev-auth request.")
             return AuthUser(
                 uid="dev-user-local",
                 email="dev@careeradvisor.local",
                 display_name="Developer Mode",
             )
 
+        # Firebase isn't configured and dev auth wasn't explicitly enabled:
+        # refuse the request rather than silently trusting the caller.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service is not configured on the server.",
+        )
+
+    # Firebase Admin IS configured: every token, with no exceptions, is
+    # cryptographically verified below. There is no fallback path here.
     decoded_token = verify_firebase_token(token)
     uid = decoded_token.get("uid") or decoded_token.get("sub")
     if not uid:
