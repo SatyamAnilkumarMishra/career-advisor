@@ -1,8 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import {
   signInWithPopup,
-  signInWithRedirect,
-  getRedirectResult,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   updateProfile,
@@ -12,7 +10,7 @@ import {
   GoogleAuthProvider,
   type User as FirebaseUser,
 } from 'firebase/auth';
-import { auth, googleProvider, isFirebaseConfigured } from '@/lib/firebase';
+import { auth, isFirebaseConfigured } from '@/lib/firebase';
 import { setAuthToken } from '@/lib/api';
 
 export interface UserProfile {
@@ -86,7 +84,7 @@ function formatAuthError(err: any): Error {
   if (err?.code === 'auth/popup-closed-by-user') {
     userFriendlyMessage = 'Sign-in window was closed before completion. Please try again.';
   } else if (err?.code === 'auth/popup-blocked') {
-    userFriendlyMessage = 'The Google sign-in window was blocked by your browser. Please allow popups for this site.';
+    userFriendlyMessage = 'The Google sign-in popup was blocked by your browser. Please allow popups for this site.';
   } else if (err?.code === 'auth/unauthorized-domain') {
     const host = typeof window !== 'undefined' ? window.location.hostname : 'current domain';
     userFriendlyMessage = `Domain "${host}" is not authorized in Firebase. Please add "${host}" under Firebase Console > Authentication > Settings > Authorized domains.`;
@@ -131,27 +129,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     if (isFirebaseConfigured && auth) {
-
-      getRedirectResult(auth)
-        .then((result) => {
-          if (result?.user) {
-            console.info('Google redirect sign-in completed for', result.user.email);
-            result.user.getIdToken().then((token) => {
-              updateSession(token, {
-                uid: result.user.uid,
-                email: result.user.email,
-                displayName: result.user.displayName,
-                photoURL: result.user.photoURL,
-              });
-            });
-          } else {
-            console.info('No pending Google redirect result on this page load.');
-          }
-        })
-        .catch((err) => {
-          console.warn('Google redirect sign-in error:', err?.code, err?.message);
-        });
-
       const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
         if (firebaseUser) {
           try {
@@ -167,7 +144,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             updateSession(null, null);
           }
         } else {
-
           localStorage.removeItem(DEV_USER_STORAGE_KEY);
           updateSession(null, null);
         }
@@ -191,13 +167,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [updateSession]);
 
   const loginWithGoogle = async () => {
-    setLoading(true);
-
     if (!isFirebaseConfigured || !auth) {
-      setLoading(false);
       throw new Error(
         'Google sign-in is not available because Firebase is not configured for this deployment. ' +
-          'Set VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, and VITE_FIREBASE_PROJECT_ID (see frontend/.env.example), then restart the app.'
+          'Set VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, and VITE_FIREBASE_PROJECT_ID in your environment.'
       );
     }
 
@@ -209,11 +182,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       provider.addScope('email');
       provider.addScope('profile');
 
-      await signInWithRedirect(auth, provider);
-
+      // Popup sign-in avoids cross-domain third-party cookie partitioning issues
+      const result = await signInWithPopup(auth, provider);
+      const token = await result.user.getIdToken();
+      updateSession(token, {
+        uid: result.user.uid,
+        email: result.user.email,
+        displayName: result.user.displayName,
+        photoURL: result.user.photoURL,
+      });
     } catch (err: any) {
       console.warn('Firebase Google Sign-In attempt error:', err?.code, err?.message);
-      setLoading(false);
       throw formatAuthError(err);
     }
   };
@@ -288,7 +267,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(true);
 
     if (isFirebaseConfigured && auth) {
-
       try {
         const result = await createUserWithEmailAndPassword(auth, cleanEmail, password);
         if (cleanName) {
