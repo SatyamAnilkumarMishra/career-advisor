@@ -89,3 +89,130 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {
       // ignore
     }
+
+        if (isFirebaseConfigured && auth) {
+      // onIdTokenChanged listens to sign-in, sign-out, and automatic hourly token refreshes
+      const unsubscribe = onIdTokenChanged(auth, async (firebaseUser: FirebaseUser | null) => {
+        if (firebaseUser) {
+          try {
+            const token = await firebaseUser.getIdToken();
+            updateSession(token, {
+              uid: firebaseUser.uid,
+              email: firebaseUser.email,
+              displayName: firebaseUser.displayName || (firebaseUser.email ? firebaseUser.email.split('@')[0] : 'User'),
+              photoURL: firebaseUser.photoURL,
+            });
+          } catch (err) {
+            console.error('Failed to obtain fresh Firebase ID token:', err);
+            updateSession(null, null);
+          }
+        } else {
+          updateSession(null, null);
+        }
+        setLoading(false);
+      });
+      return () => unsubscribe();
+    } else {
+      setLoading(false);
+    }
+  }, [updateSession]);
+  const loginWithGoogle = async () => {
+    if (!isFirebaseConfigured || !auth) {
+      throw new Error(
+        'Google sign-in is not available because Firebase is not configured for this deployment. ' +
+          'Set VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, and VITE_FIREBASE_PROJECT_ID in your environment.'
+      );
+    }
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({
+        prompt: 'select_account',
+      });
+      provider.addScope('email');
+      provider.addScope('profile');
+      const result = await signInWithPopup(auth, provider);
+      const token = await result.user.getIdToken();
+      updateSession(token, {
+        uid: result.user.uid,
+        email: result.user.email,
+        displayName: result.user.displayName,
+        photoURL: result.user.photoURL,
+      });
+    } catch (err: any) {
+      console.warn('Firebase Google Sign-In attempt error:', err?.code, err?.message);
+      throw formatAuthError(err);
+    }
+  };
+  const loginWithEmail = async (email: string, password: string) => {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@') || !cleanEmail.includes('.')) {
+      throw new Error('Please enter a valid email address.');
+    }
+    if (!password) {
+      throw new Error('Please enter your password.');
+    }
+    if (!isFirebaseConfigured || !auth) {
+      throw new Error('Authentication service is not configured.');
+    }
+    try {
+      const result = await signInWithEmailAndPassword(auth, cleanEmail, password);
+      const token = await result.user.getIdToken();
+      updateSession(token, {
+        uid: result.user.uid,
+        email: result.user.email,
+        displayName: result.user.displayName || cleanEmail.split('@')[0],
+        photoURL: result.user.photoURL,
+      });
+    } catch (err: any) {
+      console.warn('Firebase login attempt:', err?.code, err?.message);
+      throw formatAuthError(err);
+    }
+  };
+  const registerWithEmail = async (email: string, password: string, displayName?: string) => {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanName = displayName?.trim() || cleanEmail.split('@')[0];
+    if (!cleanEmail || !cleanEmail.includes('@') || !cleanEmail.includes('.')) {
+      throw new Error('Please enter a valid email address.');
+    }
+    if (!password || password.length < 6) {
+      throw new Error('Password must be at least 6 characters long.');
+    }
+    if (!isFirebaseConfigured || !auth) {
+      throw new Error('Authentication service is not configured.');
+    }
+    try {
+      const result = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+      if (cleanName) {
+        try {
+          await updateProfile(result.user, { displayName: cleanName });
+        } catch (profileErr) {
+          console.warn('Failed to update display name:', profileErr);
+        }
+      }
+      try {
+        await sendEmailVerification(result.user);
+        sessionStorage.setItem(JUST_REGISTERED_STORAGE_KEY, cleanEmail);
+      } catch (verifyErr) {
+        console.warn('Failed to send verification email:', verifyErr);
+      }
+      const token = await result.user.getIdToken();
+      updateSession(token, {
+        uid: result.user.uid,
+        email: result.user.email,
+        displayName: cleanName || result.user.displayName,
+        photoURL: result.user.photoURL,
+      });
+    } catch (err: any) {
+      console.warn('Firebase registration attempt:', err?.code, err?.message);
+      throw formatAuthError(err);
+    }
+  };
+  const devLogin = () => {
+    console.warn('devLogin is disabled in production.');
+  };
+  const logout = async () => {
+    if (isFirebaseConfigured && auth) {
+      await signOut(auth);
+    }
+    updateSession(null, null);
+  };
