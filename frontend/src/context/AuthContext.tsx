@@ -6,7 +6,7 @@ import {
   updateProfile,
   sendEmailVerification,
   signOut,
-  onIdTokenChanged,
+  onAuthStateChanged,
   GoogleAuthProvider,
   type User as FirebaseUser,
 } from 'firebase/auth';
@@ -34,7 +34,48 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const DEV_USER_STORAGE_KEY = 'career_advisor_dev_user';
+const USERS_STORAGE_KEY = 'career_advisor_registered_users';
 export const JUST_REGISTERED_STORAGE_KEY = 'career_advisor_just_registered_email';
+
+function hashPassword(pwd: string): string {
+  let h1 = 0xdeadbeef ^ 12345;
+  let h2 = 0x41c6ce57 ^ 67890;
+  for (let i = 0; i < pwd.length; i++) {
+    const ch = pwd.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16);
+}
+
+interface LocalAccount {
+  email: string;
+  passwordHash: string;
+  displayName: string;
+  uid: string;
+}
+
+function getLocalUsers(): Record<string, LocalAccount> {
+  try {
+    const raw = localStorage.getItem(USERS_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveLocalUser(account: LocalAccount): void {
+  try {
+    const users = getLocalUsers();
+    users[account.email.toLowerCase()] = account;
+    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
+  } catch (err) {
+    console.error('Failed to persist local user:', err);
+  }
+}
 
 function formatAuthError(err: any): Error {
   console.error('Firebase Auth error:', err);
@@ -92,36 +133,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   useEffect(() => {
-    // Purge any stale dev tokens from previous test sessions
-    try {
-      localStorage.removeItem('career_advisor_dev_user');
-    } catch {
-      // ignore
-    }
-
     if (isFirebaseConfigured && auth) {
-      // onIdTokenChanged listens to sign-in, sign-out, and automatic hourly token refreshes
-      const unsubscribe = onIdTokenChanged(auth, async (firebaseUser: FirebaseUser | null) => {
+      const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
         if (firebaseUser) {
           try {
             const token = await firebaseUser.getIdToken();
             updateSession(token, {
               uid: firebaseUser.uid,
               email: firebaseUser.email,
-              displayName: firebaseUser.displayName || (firebaseUser.email ? firebaseUser.email.split('@')[0] : 'User'),
+              displayName: firebaseUser.displayName,
               photoURL: firebaseUser.photoURL,
             });
           } catch (err) {
-            console.error('Failed to obtain fresh Firebase ID token:', err);
+            console.error('Failed to get Firebase ID token:', err);
             updateSession(null, null);
           }
         } else {
+          // When Firebase is configured, clear stale local tokens so invalid tokens are never sent to API
+          localStorage.removeItem(DEV_USER_STORAGE_KEY);
           updateSession(null, null);
         }
         setLoading(false);
       });
       return () => unsubscribe();
     } else {
+      // Offline / Local Dev Auth Fallback
+      const stored = localStorage.getItem(DEV_USER_STORAGE_KEY);
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored) as UserProfile;
+          const token = `dev-token:${parsed.uid}:${parsed.displayName || 'Dev'}:${parsed.email || ''}`;
+          updateSession(token, parsed);
+        } catch {
+          localStorage.removeItem(DEV_USER_STORAGE_KEY);
+        }
+      }
       setLoading(false);
     }
   }, [updateSession]);
@@ -166,23 +212,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error('Please enter your password.');
     }
 
-    if (!isFirebaseConfigured || !auth) {
-      throw new Error('Authentication service is not configured.');
+    if (isFirebaseConfigured && auth) {
+      try {
+        const result = await signInWithEmailAndPassword(auth, cleanEmail, password);
+        const token = await result.user.getIdToken();
+        const profile: UserProfile = {
+          uid: result.user.uid,
+          email: result.user.email,
+          displayName: result.user.displayName || cleanEmail.split('@')[0],
+          photoURL: result.user.photoURL,
+        };
+        updateSession(token, profile);
+        return;
+      } catch (err: any) {
+        console.warn('Firebase login attempt:', err?.code, err?.message);
+        throw formatAuthError(err);
+      }
     }
 
-    try {
-      const result = await signInWithEmailAndPassword(auth, cleanEmail, password);
-      const token = await result.user.getIdToken();
-      updateSession(token, {
-        uid: result.user.uid,
-        email: result.user.email,
-        displayName: result.user.displayName || cleanEmail.split('@')[0],
-        photoURL: result.user.photoURL,
-      });
-    } catch (err: any) {
-      console.warn('Firebase login attempt:', err?.code, err?.message);
-      throw formatAuthError(err);
+    const localUsers = getLocalUsers();
+    const existing = localUsers[cleanEmail];
+
+    if (!existing) {
+      throw new Error('No account found with this email. Please switch to Register to create an account first.');
     }
+
+    if (existing.passwordHash !== hashPassword(password)) {
+      throw new Error('Incorrect password. Please verify your credentials and try again.');
+    }
+
+    const profile: UserProfile = {
+      uid: existing.uid,
+      email: existing.email,
+      displayName: existing.displayName,
+      photoURL: null,
+    };
+    const token = `dev-token:${existing.uid}:${existing.displayName}:${existing.email}`;
+    localStorage.setItem(DEV_USER_STORAGE_KEY, JSON.stringify(profile));
+    updateSession(token, profile);
   };
 
   const registerWithEmail = async (email: string, password: string, displayName?: string) => {
@@ -196,48 +263,87 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error('Password must be at least 6 characters long.');
     }
 
-    if (!isFirebaseConfigured || !auth) {
-      throw new Error('Authentication service is not configured.');
-    }
-
-    try {
-      const result = await createUserWithEmailAndPassword(auth, cleanEmail, password);
-      if (cleanName) {
-        try {
-          await updateProfile(result.user, { displayName: cleanName });
-        } catch (profileErr) {
-          console.warn('Failed to update display name:', profileErr);
-        }
-      }
-
+    if (isFirebaseConfigured && auth) {
       try {
-        await sendEmailVerification(result.user);
-        sessionStorage.setItem(JUST_REGISTERED_STORAGE_KEY, cleanEmail);
-      } catch (verifyErr) {
-        console.warn('Failed to send verification email:', verifyErr);
-      }
+        const result = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+        if (cleanName) {
+          try {
+            await updateProfile(result.user, { displayName: cleanName });
+          } catch (profileErr) {
+            console.warn('Failed to update display name:', profileErr);
+          }
+        }
 
-      const token = await result.user.getIdToken();
-      updateSession(token, {
-        uid: result.user.uid,
-        email: result.user.email,
-        displayName: cleanName || result.user.displayName,
-        photoURL: result.user.photoURL,
-      });
-    } catch (err: any) {
-      console.warn('Firebase registration attempt:', err?.code, err?.message);
-      throw formatAuthError(err);
+        try {
+          await sendEmailVerification(result.user);
+          sessionStorage.setItem(JUST_REGISTERED_STORAGE_KEY, cleanEmail);
+        } catch (verifyErr) {
+          console.warn('Failed to send verification email:', verifyErr);
+        }
+
+        const token = await result.user.getIdToken();
+        const profile: UserProfile = {
+          uid: result.user.uid,
+          email: result.user.email,
+          displayName: cleanName || result.user.displayName,
+          photoURL: result.user.photoURL,
+        };
+        updateSession(token, profile);
+        return;
+      } catch (err: any) {
+        console.warn('Firebase registration attempt:', err?.code, err?.message);
+        throw formatAuthError(err);
+      }
     }
+
+    const localUsers = getLocalUsers();
+    if (localUsers[cleanEmail]) {
+      throw new Error('An account with this email address already exists. Please sign in instead.');
+    }
+
+    const uid = 'usr_' + btoa(cleanEmail).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
+    const localAccount: LocalAccount = {
+      email: cleanEmail,
+      passwordHash: hashPassword(password),
+      displayName: cleanName,
+      uid,
+    };
+    saveLocalUser(localAccount);
+    const profile: UserProfile = {
+      uid,
+      email: cleanEmail,
+      displayName: cleanName,
+      photoURL: null,
+    };
+    const token = `dev-token:${uid}:${cleanName}:${cleanEmail}`;
+    localStorage.setItem(DEV_USER_STORAGE_KEY, JSON.stringify(profile));
+    updateSession(token, profile);
   };
 
-  const devLogin = () => {
-    console.warn('devLogin is disabled in production.');
+  const devLogin = (name = 'Career Seeker', email = 'seeker@careeradvisor.dev') => {
+    if (isFirebaseConfigured) {
+      console.error('devLogin() is disabled: Firebase is configured for this deployment.');
+      return;
+    }
+    const sanitizedName = name.trim() || 'Career Seeker';
+    const sanitizedEmail = email.trim() || 'seeker@careeradvisor.dev';
+    const uid = 'dev-' + btoa(sanitizedEmail).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
+    const profile: UserProfile = {
+      uid,
+      email: sanitizedEmail,
+      displayName: sanitizedName,
+      photoURL: null,
+    };
+    const token = `dev-token:${uid}:${sanitizedName}:${sanitizedEmail}`;
+    localStorage.setItem(DEV_USER_STORAGE_KEY, JSON.stringify(profile));
+    updateSession(token, profile);
   };
 
   const logout = async () => {
     if (isFirebaseConfigured && auth) {
       await signOut(auth);
     }
+    localStorage.removeItem(DEV_USER_STORAGE_KEY);
     updateSession(null, null);
   };
 
