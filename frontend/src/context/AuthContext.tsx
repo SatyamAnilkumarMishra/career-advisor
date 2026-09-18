@@ -6,7 +6,7 @@ import {
   updateProfile,
   sendEmailVerification,
   signOut,
-  onAuthStateChanged,
+  onIdTokenChanged,
   GoogleAuthProvider,
   type User as FirebaseUser,
 } from 'firebase/auth';
@@ -19,6 +19,7 @@ export interface UserProfile {
   displayName: string | null;
   photoURL: string | null;
 }
+
 interface AuthContextType {
   user: UserProfile | null;
   idToken: string | null;
@@ -30,11 +31,15 @@ interface AuthContextType {
   devLogin: (name?: string, email?: string) => void;
   logout: () => Promise<void>;
 }
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
 export const JUST_REGISTERED_STORAGE_KEY = 'career_advisor_just_registered_email';
+
 function formatAuthError(err: any): Error {
   console.error('Firebase Auth error:', err);
   let userFriendlyMessage = 'Authentication failed. Please try again.';
+
   if (err?.code === 'auth/popup-closed-by-user') {
     userFriendlyMessage = 'Sign-in window was closed before completion. Please try again.';
   } else if (err?.code === 'auth/popup-blocked') {
@@ -68,20 +73,24 @@ function formatAuthError(err: any): Error {
   } else if (err?.message) {
     userFriendlyMessage = err.message.replace(/^Firebase:\s*/, '').replace(/\s*\(auth\/[^)]+\)\.?$/, '');
   }
+
   const enhancedError = new Error(userFriendlyMessage);
   (enhancedError as any).code = err?.code;
   return enhancedError;
 }
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [idToken, setIdToken] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+
   // Sync token to API client
   const updateSession = useCallback((token: string | null, profile: UserProfile | null) => {
     setIdToken(token);
     setUser(profile);
     setAuthToken(token);
   }, []);
+
   useEffect(() => {
     // Purge any stale dev tokens from previous test sessions
     try {
@@ -90,7 +99,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // ignore
     }
 
-        if (isFirebaseConfigured && auth) {
+    if (isFirebaseConfigured && auth) {
       // onIdTokenChanged listens to sign-in, sign-out, and automatic hourly token refreshes
       const unsubscribe = onIdTokenChanged(auth, async (firebaseUser: FirebaseUser | null) => {
         if (firebaseUser) {
@@ -116,6 +125,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
     }
   }, [updateSession]);
+
   const loginWithGoogle = async () => {
     if (!isFirebaseConfigured || !auth) {
       throw new Error(
@@ -123,6 +133,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           'Set VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, and VITE_FIREBASE_PROJECT_ID in your environment.'
       );
     }
+
     try {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({
@@ -130,6 +141,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       provider.addScope('email');
       provider.addScope('profile');
+
       const result = await signInWithPopup(auth, provider);
       const token = await result.user.getIdToken();
       updateSession(token, {
@@ -143,17 +155,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw formatAuthError(err);
     }
   };
+
   const loginWithEmail = async (email: string, password: string) => {
     const cleanEmail = email.trim().toLowerCase();
+
     if (!cleanEmail || !cleanEmail.includes('@') || !cleanEmail.includes('.')) {
       throw new Error('Please enter a valid email address.');
     }
     if (!password) {
       throw new Error('Please enter your password.');
     }
+
     if (!isFirebaseConfigured || !auth) {
       throw new Error('Authentication service is not configured.');
     }
+
     try {
       const result = await signInWithEmailAndPassword(auth, cleanEmail, password);
       const token = await result.user.getIdToken();
@@ -168,18 +184,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw formatAuthError(err);
     }
   };
+
   const registerWithEmail = async (email: string, password: string, displayName?: string) => {
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = displayName?.trim() || cleanEmail.split('@')[0];
+
     if (!cleanEmail || !cleanEmail.includes('@') || !cleanEmail.includes('.')) {
       throw new Error('Please enter a valid email address.');
     }
     if (!password || password.length < 6) {
       throw new Error('Password must be at least 6 characters long.');
     }
+
     if (!isFirebaseConfigured || !auth) {
       throw new Error('Authentication service is not configured.');
     }
+
     try {
       const result = await createUserWithEmailAndPassword(auth, cleanEmail, password);
       if (cleanName) {
@@ -189,12 +209,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.warn('Failed to update display name:', profileErr);
         }
       }
+
       try {
         await sendEmailVerification(result.user);
         sessionStorage.setItem(JUST_REGISTERED_STORAGE_KEY, cleanEmail);
       } catch (verifyErr) {
         console.warn('Failed to send verification email:', verifyErr);
       }
+
       const token = await result.user.getIdToken();
       updateSession(token, {
         uid: result.user.uid,
@@ -207,12 +229,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw formatAuthError(err);
     }
   };
+
   const devLogin = () => {
     console.warn('devLogin is disabled in production.');
   };
+
   const logout = async () => {
     if (isFirebaseConfigured && auth) {
       await signOut(auth);
     }
     updateSession(null, null);
   };
+
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        idToken,
+        loading,
+        isFirebaseConfigured,
+        loginWithGoogle,
+        loginWithEmail,
+        registerWithEmail,
+        devLogin,
+        logout,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = (): AuthContextType => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};
